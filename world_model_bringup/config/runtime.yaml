@@ -1,0 +1,7 @@
+# Default parameters for the World Model runtime node.
+# Override at launch, e.g.  ros2 launch world_model_bringup dummy_runtime.launch.py adapter:=remote
+/world_model_runtime:
+  ros__parameters:
+    adapter: "dummy"
+    horizon: 8
+    remote_url: "http://localhost:8080/predict_future"

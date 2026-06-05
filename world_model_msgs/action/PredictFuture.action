@@ -1,0 +1,12 @@
+# Goal: imagine the future from an observation, optionally conditioned
+# on a candidate action sequence.
+Observation observation
+ActionCondition action      # optional; horizon=0 -> free rollout
+---
+# Result: the predicted future and its risk.
+FutureState future
+RiskScore risk
+---
+# Feedback: progress while the rollout is being computed.
+uint32 step                 # steps predicted so far
+uint32 horizon              # total steps requested

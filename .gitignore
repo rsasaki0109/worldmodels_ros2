@@ -1,0 +1,23 @@
+# ROS 2 / colcon
+build/
+install/
+log/
+
+# Python
+__pycache__/
+*.py[cod]
+*.egg-info/
+.eggs/
+.pytest_cache/
+.venv/
+
+# bench / demo artifacts
+report.html
+*.html
+!world_model_*/**/*.html
+
+# editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
