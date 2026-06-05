@@ -95,6 +95,7 @@ The viewer republishes `MarkerArray` on `/world_model_viz/imagination`.
 | `world_model_msgs` | ament_cmake | the message/action **contract**: `Observation`, `ActionCondition`, `FutureState`, `FutureOccupancy`, `LatentState`, `RiskScore`, `Rollout`, `PredictFuture.action` |
 | `world_model_py` | ament_python | adapter SDK (`load_model`), `dummy` + `remote` adapters, lifecycle runtime node, sample publisher, benchmark, `world-model` CLI |
 | `world_model_viz` | ament_python | imagination viewer: imagined `FutureOccupancy` + `RiskScore` → RViz `MarkerArray` |
+| `world_model_datasets` | ament_python | `export_lerobot`: rosbag2 → LeRobot-compatible dataset (parquet + mp4 + meta), GPU-free |
 | `world_model_bringup` | ament_cmake | launch files + demo config |
 
 ## Adapter SDK
@@ -139,14 +140,39 @@ latents — identical frames ≈ 0 surprise, a changed frame ≈ 0.65. torch and
 transformers are **optional**: imported lazily, so `dummy`/`remote` and CI need
 neither.
 
+## rosbag2 → robot-learning dataset
+
+Turn a recording into a LeRobot-compatible dataset — **no GPU**. The image
+topic is the master clock; state/action are nearest-neighbour joined to each
+frame (header stamp when present) and matches outside `--tol-ms` are dropped.
+
+```bash
+ros2 run world_model_datasets export_lerobot \
+    --bag ./my_bag \
+    --image-topic /camera/image_raw \
+    --state-topic /odom \
+    --action-topic /cmd_vel \
+    --fps 10 --task "drive forward" --out ./hf_dataset
+```
+
+Output (v2.1 layout): `meta/{info,episodes,tasks,stats}.json[l]`,
+`data/chunk-000/episode_*.parquet`, `videos/chunk-000/<key>/episode_*.mp4`.
+Supported state/action types: `nav_msgs/Odometry`, `sensor_msgs/JointState`,
+`geometry_msgs/Twist[Stamped]`, `std_msgs/Float{32,64}MultiArray`.
+
+> Honesty: validated structurally (parquet round-trips, mp4 is ffprobe-readable,
+> counts consistent), **not** against the `lerobot` loader (not a dependency
+> here). Verify against your `lerobot` version before training.
+
 ## Roadmap (90-day MVP)
 
 - **0–30d (this scaffold):** msgs, adapter SDK, dummy + remote adapters,
   lifecycle node, CLI, HTML smoke/bench report — **all GPU-free**. ✅
 - **31–60d:** JEPA latent adapter (image→latent→surprise) ✅, RViz imagination
   markers ✅, rosbag2 replay demo (next).
-- **61–90d:** Nav2 trajectory-scoring mock, Cosmos remote adapter, rosbag2 →
-  LeRobotDataset converter, benchmark dashboard, VLA Zoo / Walking Zoo examples.
+- **61–90d:** rosbag2 → LeRobotDataset converter ✅, Nav2 trajectory-scoring
+  mock, Cosmos remote adapter, benchmark dashboard, VLA Zoo / Walking Zoo
+  examples.
 
 ## License
 

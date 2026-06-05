@@ -33,8 +33,12 @@ jobs:
         shell: bash
         run: |
           apt-get update
+          # pyarrow + ffmpeg may not resolve as rosdep keys; install them via apt
+          # and skip them in rosdep so it does not fail on unknown keys.
+          apt-get install -y python3-pyarrow ffmpeg
           rosdep update
-          rosdep install --from-paths . --ignore-src -y
+          rosdep install --from-paths . --ignore-src -y \
+            --skip-keys "python3-pyarrow ffmpeg"
       - name: colcon build
         shell: bash
         run: |
@@ -45,5 +49,5 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
-          colcon test --packages-select world_model_py world_model_msgs world_model_bringup world_model_viz
+          colcon test --packages-select world_model_py world_model_msgs world_model_bringup world_model_viz world_model_datasets
           colcon test-result --verbose
