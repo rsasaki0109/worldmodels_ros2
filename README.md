@@ -93,11 +93,63 @@ The viewer republishes `MarkerArray` on `/world_model_viz/imagination`.
 | package | type | what |
 |---|---|---|
 | `world_model_msgs` | ament_cmake | the message/action **contract**: `Observation`, `ActionCondition`, `FutureState`, `FutureOccupancy`, `LatentState`, `RiskScore`, `Rollout`, `PredictFuture.action` |
-| `world_model_py` | ament_python | adapter SDK (`load_model`), `dummy` + `remote` adapters, lifecycle runtime node, sample publisher, benchmark, `world-model` CLI |
+| `world_model_py` | ament_python | adapter SDK (`load_model`), `dummy` / `ijepa` / `remote` adapters, lifecycle runtime node, reference `world-model-server`, benchmark, `world-model` CLI |
 | `world_model_viz` | ament_python | imagination viewer: imagined `FutureOccupancy` + `RiskScore` → RViz `MarkerArray` |
 | `world_model_datasets` | ament_python | `export_lerobot`: rosbag2 → LeRobot-compatible dataset (parquet + mp4 + meta), GPU-free |
 | `world_model_nav2` | ament_python | score Nav2 candidate trajectories by model-based risk (`ScoreTrajectories` service + risk-coloured path markers) |
 | `world_model_bringup` | ament_cmake | launch files + demo config |
+
+## Architecture
+
+```
+ INPUTS  (your robot · rosbag2 · Gazebo)
+   camera · lidar · map · ego_state · instruction · action_history
+        │
+        │  world_model_msgs/Observation         ◀── the typed contract
+        ▼
+ ┌────────────────────────────────────────────────────────────────────┐
+ │ world_model_py — runtime + adapter SDK                              │
+ │   load_model(name) → WorldModelAdapter   (numpy in · numpy out)     │
+ │                                                                     │
+ │   local  ── dummy   (deterministic, GPU-free)                       │
+ │          └─ ijepa   (I-JEPA: image → latent → surprise)             │
+ │                                                                     │
+ │   remote ── RemoteAdapter ══ HTTP/JSON (wire.py) ══▶ world-model-   │
+ │                                                      server         │
+ │                                          swap dummy → Cosmos /      │
+ │                                          DreamZero on a GPU box     │
+ │                                                                     │
+ │   lifecycle runtime_node  ·  world-model CLI  ·  bench (HTML)       │
+ └────────────────────────────────────────────────────────────────────┘
+        │
+        │  FutureState · FutureOccupancy · RiskScore · LatentState · Rollout
+        ▼
+ OUTPUTS ─┬────────────────┬───────────────────┬───────────────────────┐
+          ▼                ▼                   ▼                       ▼
+  world_model_viz    world_model_nav2    world_model_datasets    your consumers
+  RViz imagination   ScoreTrajectories   rosbag2 → LeRobot       VLA Zoo ·
+  MarkerArray        → safest path       parquet + mp4 + meta    Walking Zoo ·
+  (green→red)        (risk-coloured)     (GPU-free)              Autoware eval
+```
+
+Two rules hold the design together: **adapters are pure numpy/dataclasses** (no
+ROS, no GPU to test), and the **wire format is shared** by the remote adapter and
+the server (they cannot drift). Everything light runs with no GPU; only the
+`ijepa` adapter and a remote Cosmos/DreamZero host need one.
+
+### Interfaces
+
+| kind | name | type |
+|---|---|---|
+| topic (sub) | `/world_model_runtime/observation` | `world_model_msgs/Observation` |
+| topic (pub) | `/world_model_runtime/future_state` | `world_model_msgs/FutureState` |
+| topic (pub) | `/world_model_runtime/future_occupancy` | `world_model_msgs/FutureOccupancy` |
+| topic (pub) | `/world_model_runtime/risk_score` | `world_model_msgs/RiskScore` |
+| topic (pub) | `/world_model_viz/imagination` | `visualization_msgs/MarkerArray` |
+| service | `/world_model_trajectory_scorer/score_trajectories` | `world_model_msgs/srv/ScoreTrajectories` |
+| topic (pub) | `/world_model_trajectory_scorer/scored_paths` | `visualization_msgs/MarkerArray` |
+| HTTP | `POST /predict_future`, `GET /health` | `world-model-server` (JSON) |
+| CLI | `world-model list\|info\|bench`, `export_lerobot` | — |
 
 ## Adapter SDK
 
