@@ -33,9 +33,10 @@ jobs:
         shell: bash
         run: |
           apt-get update
-          # pyarrow + ffmpeg may not resolve as rosdep keys; install them via apt
-          # and skip them in rosdep so it does not fail on unknown keys.
-          apt-get install -y python3-pyarrow ffmpeg
+          # ffmpeg via apt; pyarrow has no noble apt package so install via pip.
+          # Both are skipped in rosdep (not resolvable rosdep keys).
+          apt-get install -y ffmpeg python3-pip
+          pip install --break-system-packages pyarrow
           rosdep update
           rosdep install --from-paths . --ignore-src -y \
             --skip-keys "python3-pyarrow ffmpeg"
