@@ -10,10 +10,19 @@ from typing import Callable, Dict
 
 from .adapters import DummyAdapter, RemoteAdapter, WorldModelAdapter
 
+
+def _make_ijepa(**kwargs) -> WorldModelAdapter:
+    # Lazy: importing jepa pulls torch/transformers only when actually used.
+    from .adapters.jepa import make_ijepa_adapter
+
+    return make_ijepa_adapter(**kwargs)
+
+
 # name -> factory(**kwargs) -> adapter
 _REGISTRY: Dict[str, Callable[..., WorldModelAdapter]] = {
     "dummy": DummyAdapter,
     "remote": RemoteAdapter,
+    "ijepa": _make_ijepa,
 }
 
 

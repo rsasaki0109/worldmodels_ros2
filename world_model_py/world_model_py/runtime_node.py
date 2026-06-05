@@ -33,6 +33,7 @@ class WorldModelRuntime(LifecycleNode):
         super().__init__("world_model_runtime", **kwargs)
         self.declare_parameter("adapter", "dummy")
         self.declare_parameter("remote_url", "http://localhost:8080/predict_future")
+        self.declare_parameter("model_id", "facebook/ijepa_vith14_1k")
         self.declare_parameter("horizon", 8)
         # autostart: self-transition through configure+activate on boot, so the
         # plain `ros2 launch` / `ros2 run` path "just works" without a separate
@@ -61,6 +62,8 @@ class WorldModelRuntime(LifecycleNode):
         kwargs = {}
         if name == "remote":
             kwargs["url"] = self.get_parameter("remote_url").get_parameter_value().string_value
+        elif name == "ijepa":
+            kwargs["model_id"] = self.get_parameter("model_id").get_parameter_value().string_value
         try:
             self._adapter = load_model(name, **kwargs)
         except Exception as exc:  # noqa: BLE001

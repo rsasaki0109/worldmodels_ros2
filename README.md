@@ -117,12 +117,34 @@ risk = wm.score_trajectory(obs, ActionCondition(action=np.zeros((8, 2), np.float
 Adding a backend = subclass `WorldModelAdapter`, implement `predict_future`,
 and `register("vjepa2", VJepa2Adapter)`.
 
+### Real model: JEPA latent server (`ijepa`)
+
+The first real backend turns a camera stream into latents and a **surprise**
+score (cosine distance between successive latents — a model-based novelty /
+anomaly signal). It loads a self-supervised JEPA image encoder (I-JEPA today;
+V-JEPA2 video weights drop into the same `jepa.py` once `transformers` ships
+them).
+
+```bash
+# optional extras, not required for dummy/remote or CI:
+pip install "torch" "transformers>=4.40"
+
+ros2 launch world_model_bringup dummy_runtime.launch.py \
+    adapter:=ijepa model_id:=facebook/ijepa_vith14_1k
+ros2 topic echo /world_model_runtime/risk_score    # surprise per frame
+```
+
+Verified on a 16 GB GPU (GPU): I-JEPA ViT-H/14, fp16, 1280-d
+latents — identical frames ≈ 0 surprise, a changed frame ≈ 0.65. torch and
+transformers are **optional**: imported lazily, so `dummy`/`remote` and CI need
+neither.
+
 ## Roadmap (90-day MVP)
 
 - **0–30d (this scaffold):** msgs, adapter SDK, dummy + remote adapters,
   lifecycle node, CLI, HTML smoke/bench report — **all GPU-free**. ✅
-- **31–60d:** V-JEPA2 local adapter, image→latent→surprise, RViz markers,
-  rosbag2 replay demo.
+- **31–60d:** JEPA latent adapter (image→latent→surprise) ✅, RViz imagination
+  markers ✅, rosbag2 replay demo (next).
 - **61–90d:** Nav2 trajectory-scoring mock, Cosmos remote adapter, rosbag2 →
   LeRobotDataset converter, benchmark dashboard, VLA Zoo / Walking Zoo examples.
 
