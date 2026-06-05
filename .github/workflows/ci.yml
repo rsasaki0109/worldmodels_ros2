@@ -1,0 +1,49 @@
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+jobs:
+  # ROS-free, GPU-free unit tests for the adapter SDK / bench. Fast feedback,
+  # and proof that adapters work without a ROS install (a core design goal).
+  unit:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - name: Install test deps
+        run: python -m pip install --upgrade pip numpy pytest
+      - name: Run adapter/bench unit tests (no ROS)
+        working-directory: world_model_py
+        run: python -m pytest test/test_adapters.py -q
+
+  # Full ROS 2 Jazzy build + colcon test inside the official container.
+  colcon:
+    runs-on: ubuntu-latest
+    container:
+      image: ros:jazzy-ros-base
+    steps:
+      - uses: actions/checkout@v4
+      - name: Install dependencies via rosdep
+        shell: bash
+        run: |
+          apt-get update
+          rosdep update
+          rosdep install --from-paths . --ignore-src -y
+      - name: colcon build
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          colcon build
+      - name: colcon test
+        shell: bash
+        run: |
+          source /opt/ros/jazzy/setup.bash
+          source install/setup.bash
+          colcon test --packages-select world_model_py world_model_msgs world_model_bringup
+          colcon test-result --verbose

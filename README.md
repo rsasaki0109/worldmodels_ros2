@@ -1,5 +1,9 @@
 # world_model_ros2
 
+[![ci](https://github.com/rsasaki0109/worldmodels_ros2/actions/workflows/ci.yml/badge.svg)](https://github.com/rsasaki0109/worldmodels_ros2/actions/workflows/ci.yml)
+[![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
+[![ROS 2](https://img.shields.io/badge/ROS%202-Jazzy-22314E.svg)](https://docs.ros.org/en/jazzy/)
+
 **A ROS 2-native runtime, adapter hub, benchmark and visualization layer for
 using *existing* World Models in robotics and autonomous driving.**
 
