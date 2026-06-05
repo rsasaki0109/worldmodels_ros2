@@ -55,9 +55,8 @@ def test_parquet_roundtrip(tmp_path):
     cols = set(table.column_names)
     assert {"observation.state", "action", "timestamp", "frame_index",
             "episode_index", "index", "next.done", "task_index"} <= cols
-    df = table.to_pandas()
-    assert df["next.done"].tolist() == [False, False, False, False, True]
-    assert len(df["observation.state"].iloc[0]) == 6
+    assert table.column("next.done").to_pylist() == [False, False, False, False, True]
+    assert len(table.column("observation.state")[0].as_py()) == 6
 
 
 def test_video_is_playable(tmp_path):

@@ -97,9 +97,8 @@ def test_convert_end_to_end(tmp_path):
 
     table = pq.read_table(os.path.join(out, "data", "chunk-000", "episode_000000.parquet"))
     assert table.num_rows == 8
-    df = table.to_pandas()
     # state x increments with k (odometry position.x = k)
-    xs = [s[0] for s in df["observation.state"]]
+    xs = [row[0] for row in table.column("observation.state").to_pylist()]
     assert xs == sorted(xs)
     mp4 = os.path.join(out, "videos", "chunk-000",
                        "observation.images.camera_image_raw", "episode_000000.mp4")
