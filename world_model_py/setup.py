@@ -22,8 +22,9 @@ setup(
             # ROS 2 nodes
             "runtime_node = world_model_py.runtime_node:main",
             "sample_publisher = world_model_py.sample_publisher:main",
-            # standalone CLI (also usable without ROS)
+            # standalone CLI + reference remote server (also usable without ROS)
             "world-model = world_model_py.cli:main",
+            "world-model-server = world_model_py.server:main",
         ],
     },
 )

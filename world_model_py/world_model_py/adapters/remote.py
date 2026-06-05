@@ -1,12 +1,11 @@
 """HTTP adapter that forwards observations to a remote World Model server.
 
-Heavy backends (Cosmos 16B/64B, DreamZero, ...) do not fit on a 16 GB GPU,
-so they are expected to run on a separate machine and be reached over a
-simple JSON/HTTP boundary. This adapter is the local stub for that: it POSTs
-the observation and parses a ``FuturePrediction``-shaped JSON reply.
-
-Only the Python stdlib is used (urllib) so the package has no extra runtime
-dependency just to talk to a server.
+Heavy backends (Cosmos 16B/64B, DreamZero, ...) do not fit on a 16 GB GPU, so
+they run on a separate machine reached over a simple JSON/HTTP boundary. This
+is the local stub: it POSTs the observation and parses a FuturePrediction-shaped
+reply. The request/response format lives in ``world_model_py.wire`` and is
+shared with the reference server (``world_model_py.server``) so the two cannot
+drift. Only the Python stdlib is used (urllib) -- no extra runtime dependency.
 """
 from __future__ import annotations
 
@@ -15,14 +14,8 @@ import urllib.error
 import urllib.request
 from typing import Optional
 
-import numpy as np
-
-from .base import (
-    ActionCondition,
-    FuturePrediction,
-    Observation,
-    WorldModelAdapter,
-)
+from .base import ActionCondition, FuturePrediction, Observation, WorldModelAdapter
+from .. import wire
 
 
 class RemoteAdapterError(RuntimeError):
@@ -36,22 +29,16 @@ class RemoteAdapter(WorldModelAdapter):
         self.url = url
         self.timeout = float(timeout)
 
-    def _payload(self, obs, action, horizon) -> dict:
-        def arr(a):
-            return None if a is None else np.asarray(a).tolist()
-
-        return {
-            "observation": {
-                "image": arr(obs.image),
-                "ego_state": arr(obs.ego_state),
-                "action_history": arr(obs.action_history),
-                "instruction": obs.instruction,
-            },
-            "action": None
-            if action is None
-            else {"action": arr(action.action), "dt": action.dt},
-            "horizon": int(horizon),
-        }
+    def _post(self, path_url: str, payload: dict) -> dict:
+        data = json.dumps(payload).encode("utf-8")
+        req = urllib.request.Request(
+            path_url, data=data, headers={"Content-Type": "application/json"}
+        )
+        try:
+            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
+        except (urllib.error.URLError, TimeoutError, ValueError) as exc:
+            raise RemoteAdapterError(f"remote world model at {path_url} failed: {exc}") from exc
 
     def predict_future(
         self,
@@ -61,32 +48,17 @@ class RemoteAdapter(WorldModelAdapter):
     ) -> FuturePrediction:
         if action is not None and action.horizon > 0:
             horizon = action.horizon
-        data = json.dumps(self._payload(obs, action, horizon)).encode("utf-8")
-        req = urllib.request.Request(
-            self.url, data=data, headers={"Content-Type": "application/json"}
-        )
+        body = self._post(self.url, wire.request_payload(obs, action, horizon))
+        return wire.prediction_from_response(body)
+
+    def health(self) -> dict:
+        """GET the server's /health sibling of the predict URL."""
+        base = self.url.rsplit("/", 1)[0]
         try:
-            with urllib.request.urlopen(req, timeout=self.timeout) as resp:
-                body = json.loads(resp.read().decode("utf-8"))
+            with urllib.request.urlopen(base + "/health", timeout=self.timeout) as resp:
+                return json.loads(resp.read().decode("utf-8"))
         except (urllib.error.URLError, TimeoutError, ValueError) as exc:
-            raise RemoteAdapterError(f"remote world model at {self.url} failed: {exc}") from exc
-
-        return self._parse(body)
-
-    @staticmethod
-    def _parse(body: dict) -> FuturePrediction:
-        latents = [np.asarray(x, dtype=np.float32) for x in body.get("latents", [])]
-        occupancy = [np.asarray(x, dtype=np.int8) for x in body.get("occupancy", [])]
-        frames = [np.asarray(x, dtype=np.uint8) for x in body.get("frames", [])]
-        return FuturePrediction(
-            dt=float(body.get("dt", 0.1)),
-            latents=latents,
-            occupancy=occupancy,
-            frames=frames,
-            risk=float(body.get("risk", 0.0)),
-            risk_confidence=float(body.get("risk_confidence", 1.0)),
-            risk_label=str(body.get("risk_label", "remote")),
-        )
+            raise RemoteAdapterError(f"remote health check failed: {exc}") from exc
 
     def info(self) -> dict:
         return {"name": self.name, "remote": True, "url": self.url, "device": "remote"}

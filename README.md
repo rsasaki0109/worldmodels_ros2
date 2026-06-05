@@ -165,6 +165,29 @@ Supported state/action types: `nav_msgs/Odometry`, `sensor_msgs/JointState`,
 > counts consistent), **not** against the `lerobot` loader (not a dependency
 > here). Verify against your `lerobot` version before training.
 
+## Remote adapters (Cosmos / DreamZero)
+
+Heavy World Foundation Models don't fit on a 16 GB GPU, so they run on another
+machine behind a JSON/HTTP boundary. The `remote` adapter is the local stub;
+`world-model-server` is a reference host. Both share one wire format
+(`world_model_py.wire`) so they can't drift. On a GPU box you swap the server's
+backing adapter from `dummy` to a heavy one — ROS 2 clients are unchanged.
+
+```bash
+# host (GPU box in production; dummy here -> no GPU needed)
+world-model-server --adapter dummy --port 8080
+
+# ROS 2 client talks to it
+ros2 launch world_model_bringup remote_runtime.launch.py
+# or directly:
+ros2 run world_model_py runtime_node --ros-args \
+    -p adapter:=remote -p remote_url:=http://HOST:8080/predict_future
+```
+
+Endpoints: `POST /predict_future` (FuturePrediction JSON), `GET /health`. The
+local↔remote round-trip is tested over real HTTP with stdlib only — the
+`remote` adapter reproduces the host's output exactly.
+
 ## Nav2 trajectory scoring (mock)
 
 Rank candidate paths by model-based risk before the robot commits to one — a
@@ -191,8 +214,8 @@ paths are published as risk-coloured (green→red) markers for RViz.
 - **31–60d:** JEPA latent adapter (image→latent→surprise) ✅, RViz imagination
   markers ✅, rosbag2 replay demo (next).
 - **61–90d:** rosbag2 → LeRobotDataset converter ✅, Nav2 trajectory-scoring
-  mock ✅, Cosmos remote adapter, benchmark dashboard, VLA Zoo / Walking Zoo
-  examples.
+  mock ✅, remote adapter + reference server (Cosmos/DreamZero-ready) ✅,
+  benchmark dashboard, VLA Zoo / Walking Zoo examples.
 
 ## License
 
