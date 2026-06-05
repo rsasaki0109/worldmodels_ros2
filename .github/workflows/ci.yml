@@ -50,5 +50,5 @@ jobs:
         run: |
           source /opt/ros/jazzy/setup.bash
           source install/setup.bash
-          colcon test --packages-select world_model_py world_model_msgs world_model_bringup world_model_viz world_model_datasets
+          colcon test --packages-select world_model_py world_model_msgs world_model_bringup world_model_viz world_model_datasets world_model_nav2
           colcon test-result --verbose

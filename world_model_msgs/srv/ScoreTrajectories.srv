@@ -1,0 +1,9 @@
+# Score candidate trajectories with model-based risk, and return the safest.
+# A World Model evaluates "what happens if the robot follows this path?" for
+# each candidate; consumers (e.g. a Nav2 controller/critic) pick the minimum.
+
+nav_msgs/Path[] trajectories     # candidate paths to evaluate
+Observation observation          # current context (optional; empty -> ignored)
+---
+float32[] scores                 # risk per trajectory, [0, 1] (lower = safer)
+int32 best_index                 # index of the minimum-risk trajectory (-1 if none)

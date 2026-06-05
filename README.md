@@ -96,6 +96,7 @@ The viewer republishes `MarkerArray` on `/world_model_viz/imagination`.
 | `world_model_py` | ament_python | adapter SDK (`load_model`), `dummy` + `remote` adapters, lifecycle runtime node, sample publisher, benchmark, `world-model` CLI |
 | `world_model_viz` | ament_python | imagination viewer: imagined `FutureOccupancy` + `RiskScore` → RViz `MarkerArray` |
 | `world_model_datasets` | ament_python | `export_lerobot`: rosbag2 → LeRobot-compatible dataset (parquet + mp4 + meta), GPU-free |
+| `world_model_nav2` | ament_python | score Nav2 candidate trajectories by model-based risk (`ScoreTrajectories` service + risk-coloured path markers) |
 | `world_model_bringup` | ament_cmake | launch files + demo config |
 
 ## Adapter SDK
@@ -164,6 +165,25 @@ Supported state/action types: `nav_msgs/Odometry`, `sensor_msgs/JointState`,
 > counts consistent), **not** against the `lerobot` loader (not a dependency
 > here). Verify against your `lerobot` version before training.
 
+## Nav2 trajectory scoring (mock)
+
+Rank candidate paths by model-based risk before the robot commits to one — a
+mock of a Nav2 controller critic (a service today, a compiled `nav2_core`
+plugin later). Each path becomes a body-frame action sequence and is scored by
+the World Model; the safest wins.
+
+```bash
+ros2 launch world_model_nav2 scorer_demo.launch.py
+# straight  risk=0.129
+# fast      risk=0.213
+# swerve    risk=0.165
+# -> safest: straight
+```
+
+Service `~/score_trajectories` (`world_model_msgs/srv/ScoreTrajectories`) takes
+`nav_msgs/Path[]` and returns a risk per path plus the safest index; scored
+paths are published as risk-coloured (green→red) markers for RViz.
+
 ## Roadmap (90-day MVP)
 
 - **0–30d (this scaffold):** msgs, adapter SDK, dummy + remote adapters,
@@ -171,7 +191,7 @@ Supported state/action types: `nav_msgs/Odometry`, `sensor_msgs/JointState`,
 - **31–60d:** JEPA latent adapter (image→latent→surprise) ✅, RViz imagination
   markers ✅, rosbag2 replay demo (next).
 - **61–90d:** rosbag2 → LeRobotDataset converter ✅, Nav2 trajectory-scoring
-  mock, Cosmos remote adapter, benchmark dashboard, VLA Zoo / Walking Zoo
+  mock ✅, Cosmos remote adapter, benchmark dashboard, VLA Zoo / Walking Zoo
   examples.
 
 ## License
