@@ -75,12 +75,26 @@ ros2 topic echo /world_model_runtime/future_state
 ros2 topic echo /world_model_runtime/risk_score
 ```
 
+### 3. See the imagination (RViz)
+
+One command brings up the dummy runtime, synthetic observations, the
+imagination viewer and RViz. The predicted occupancy is stacked along +z
+(higher = further into the future) and coloured green→red (near→far), with a
+risk readout on top — all from the GPU-free dummy model.
+
+```bash
+ros2 launch world_model_viz imagination_demo.launch.py     # rviz:=false on headless
+```
+
+The viewer republishes `MarkerArray` on `/world_model_viz/imagination`.
+
 ## Packages
 
 | package | type | what |
 |---|---|---|
 | `world_model_msgs` | ament_cmake | the message/action **contract**: `Observation`, `ActionCondition`, `FutureState`, `FutureOccupancy`, `LatentState`, `RiskScore`, `Rollout`, `PredictFuture.action` |
 | `world_model_py` | ament_python | adapter SDK (`load_model`), `dummy` + `remote` adapters, lifecycle runtime node, sample publisher, benchmark, `world-model` CLI |
+| `world_model_viz` | ament_python | imagination viewer: imagined `FutureOccupancy` + `RiskScore` → RViz `MarkerArray` |
 | `world_model_bringup` | ament_cmake | launch files + demo config |
 
 ## Adapter SDK
