@@ -60,6 +60,19 @@ register("mymodel", MyAdapter)
 Add unit tests with a fake backend so they run in CI without the real weights
 (see `test/test_jepa.py`), and a `gpu_verify_*.py` script for the real model.
 
+**Ship an adapter from your own package** — no edits here needed. Expose it
+under the `world_model_ros2.adapters` entry-point group:
+
+```toml
+# pyproject.toml in your package
+[project.entry-points."world_model_ros2.adapters"]
+mymodel = "my_pkg.adapter:make_my_adapter"
+```
+
+Once installed, `load_model("mymodel")` and `world-model list` pick it up
+automatically. Built-in names take precedence, so an entry point can't hijack
+`dummy`/`remote`/`ijepa`/`vjepa2`.
+
 ## Pull requests
 
 - Branch off `main`; keep PRs focused.

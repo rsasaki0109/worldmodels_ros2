@@ -7,6 +7,9 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Entry-point adapter discovery** — external pip packages can add World Model
+  backends under the `world_model_ros2.adapters` group; `load_model()` /
+  `world-model list` pick them up with no edits to this repo.
 - **`vjepa2` adapter** — real V-JEPA 2 video encoder via `torch.hub`
   (`facebookresearch/vjepa2`): rolling-clip latent + temporal surprise. Verified
   on a 16 GB GPU (ViT-L, fp16). torch stays optional/lazy-imported.
