@@ -12,10 +12,11 @@ using *existing* World Models in robotics and autonomous driving.**
 > score trajectories, visualize imagination in RViz, and export rosbag2 data to
 > robot-learning datasets.
 
-![imagined future occupancy + risk](docs/imagination.gif)
+![real video through V-JEPA 2, surprise spikes on scene changes](docs/hero.gif)
 
-<sub>Imagined `FutureOccupancy` (green = near, red = far) and action-conditioned
-`RiskScore` from one ROS 2 call — here the GPU-free `dummy` adapter.</sub>
+<sub>Real footage → the real **V-JEPA 2** video model on a GPU → **surprise**:
+the latent stays calm while the camera pans and spikes the instant the scene
+cuts. Actual model output on real photographs.</sub>
 
 ## Highlights
 
@@ -113,7 +114,11 @@ risk readout on top — all from the GPU-free dummy model.
 ros2 launch world_model_viz imagination_demo.launch.py     # rviz:=false on headless
 ```
 
-The viewer republishes `MarkerArray` on `/world_model_viz/imagination`.
+![imagined future occupancy + risk](docs/imagination.gif)
+
+<sub>Top-down: a robot and an obstacle whose future occupancy the model predicts
+(green = soon → red = later), with the risk of the planned action. The viewer
+republishes `MarkerArray` on `/world_model_viz/imagination`.</sub>
 
 ### 4. See the imagination (Foxglove)
 

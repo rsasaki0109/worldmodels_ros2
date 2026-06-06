@@ -16,10 +16,12 @@ FPS_imagination=12 ; FRAMES_imagination=32
 FPS_nav2=11        ; FRAMES_nav2=43
 FPS_ijepa=6        ; FRAMES_ijepa=18
 FPS_compare=6      ; FRAMES_compare=18
+FPS_hero=6         ; FRAMES_hero=24
 OUT_imagination=imagination.gif
 OUT_nav2=nav2_scoring.gif
 OUT_ijepa=ijepa_surprise.gif
 OUT_compare=jepa_compare.gif
+OUT_hero=hero.gif
 
 build_one() {
   local kind="$1" work; work="$(mktemp -d)"
@@ -37,7 +39,7 @@ build_one() {
 }
 
 case "${1:-all}" in
-  all) build_one imagination; build_one nav2; build_one ijepa; build_one compare ;;
-  imagination|nav2|ijepa|compare) build_one "$1" ;;
-  *) echo "usage: $0 [imagination|nav2|ijepa|compare|all]"; exit 2 ;;
+  all) build_one imagination; build_one nav2; build_one ijepa; build_one compare; build_one hero ;;
+  imagination|nav2|ijepa|compare|hero) build_one "$1" ;;
+  *) echo "usage: $0 [imagination|nav2|ijepa|compare|hero|all]"; exit 2 ;;
 esac

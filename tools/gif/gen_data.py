@@ -146,11 +146,67 @@ def gen_compare():
     return {"frames": out}
 
 
+def gen_hero():
+    """Hero GIF: REAL photographs panned into a video, fed to the real V-JEPA 2
+    encoder; surprise spikes at scene cuts. Needs network (picsum.photos, fixed
+    seeds, Unsplash-licensed) + a GPU. Output is the derived GIF, not the photos.
+    """
+    import base64
+    import io
+    import urllib.request
+    from PIL import Image
+
+    W, Hh, CROP, PAN = 512, 384, 384, 8
+    candidates = ["forest", "ocean", "city", "desert", "snow", "market"]
+
+    def fetch(seed):
+        url = f"https://picsum.photos/seed/{seed}/{W}/{Hh}"
+        data = urllib.request.urlopen(url, timeout=30).read()
+        return Image.open(io.BytesIO(data)).convert("RGB")
+
+    imgs = [fetch(s) for s in candidates]
+    means = [np.asarray(im.resize((32, 32)), np.float32).reshape(-1, 3).mean(0) for im in imgs]
+    # greedily pick the 3 most mutually-different scenes -> punchier cuts
+    chosen = [0]
+    while len(chosen) < 3:
+        best, bestd = None, -1
+        for i in range(len(imgs)):
+            if i in chosen:
+                continue
+            d = min(float(np.linalg.norm(means[i] - means[c])) for c in chosen)
+            if d > bestd:
+                best, bestd = i, d
+        chosen.append(best)
+
+    def crop(im, k):
+        x = int((W - CROP) * k / (PAN - 1))
+        return np.asarray(im.crop((x, 0, x + CROP, CROP)).resize((256, 256), Image.BILINEAR)).astype(np.uint8)
+
+    frames = [crop(imgs[c], k) for c in chosen for k in range(PAN)]
+
+    wm = load_model("vjepa2", entry="vjepa2_vit_large", device="cuda", dtype="float16", clip_len=16)
+    for _ in range(16):                       # prime the clip buffer (no warmup blip)
+        wm.predict_future(Observation(image=frames[0]), horizon=1)
+    wm.reset()
+
+    out = []
+    for f in frames:
+        r = float(wm.predict_future(Observation(image=f), horizon=1).risk)
+        thumb = Image.fromarray(f).resize((150, 150), Image.BILINEAR)
+        buf = io.BytesIO()
+        thumb.save(buf, "JPEG", quality=82)
+        out.append({"img": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode(),
+                    "surprise": round(r, 4)})
+    cuts = [PAN, 2 * PAN]
+    return {"frames": out, "cuts": cuts}
+
+
 GENERATORS = {
     "imagination": gen_imagination,
     "nav2": gen_nav2,
     "ijepa": gen_ijepa,
     "compare": gen_compare,
+    "hero": gen_hero,
 }
 
 

@@ -17,13 +17,14 @@ import sys
 REPO_URL = "https://github.com/rsasaki0109/worldmodels_ros2"
 
 CAPTIONS = {
-    "imagination.gif": "Imagined future occupancy + risk from one ROS 2 call (dummy).",
+    "hero.gif": "Real footage → V-JEPA 2 → surprise; the latent spikes when the scene cuts.",
+    "imagination.gif": "Top-down: predicted future occupancy of an obstacle (green→red) + risk.",
     "jepa_compare.gif": "Same camera stream, two real World Models: I-JEPA vs V-JEPA 2 surprise.",
     "nav2_scoring.gif": "Nav2 candidate paths ranked by model-based risk; safest highlighted.",
     "ijepa_surprise.gif": "Real I-JEPA surprise spiking on scene changes (GPU).",
 }
-HERO = "imagination.gif"
-ORDER = ["jepa_compare.gif", "nav2_scoring.gif", "ijepa_surprise.gif"]
+HERO = "hero.gif"
+ORDER = ["jepa_compare.gif", "imagination.gif", "nav2_scoring.gif", "ijepa_surprise.gif"]
 
 
 def _card(gif: str) -> str:
