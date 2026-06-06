@@ -24,8 +24,22 @@ cd world_model_py && python3 -m pytest test/test_adapters.py test/test_jepa.py \
 ```
 
 CI mirrors this: a ROS-free `unit` job and a full ROS 2 Jazzy `colcon` job. Both
-must stay green. GPU-only checks (`test/gpu_verify_*.py`) are **not** in CI — run
-them locally if you touch the `ijepa` path.
+must stay green.
+
+### Manual GPU checks (not in CI)
+
+These download real weights and need a GPU, so they are kept out of CI. Run the
+relevant one if you touch the `ijepa` / `vjepa2` paths (source the workspace
+first):
+
+```bash
+python3 world_model_py/test/gpu_verify_jepa.py           # I-JEPA: image -> latent -> surprise
+python3 world_model_py/test/gpu_verify_vjepa2.py         # V-JEPA 2: video clip -> surprise
+python3 world_model_py/test/gpu_verify_runtime_ijepa.py  # real I-JEPA through the ROS 2 lifecycle node
+```
+
+Each prints a per-frame surprise sequence and an `*_OK` line when surprise
+spikes on scene changes as expected.
 
 ## Design rules (please keep these intact)
 
