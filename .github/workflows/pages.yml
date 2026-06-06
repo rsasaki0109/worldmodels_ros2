@@ -26,12 +26,8 @@ jobs:
         with:
           python-version: "3.12"
       - run: python -m pip install --upgrade pip numpy
-      - name: Generate benchmark dashboard
-        working-directory: world_model_py
-        run: |
-          mkdir -p ../_site
-          python -m world_model_py.cli bench-compare \
-            --adapters dummy,remote --runs 300 --out ../_site/index.html
+      - name: Build demo landing + benchmark dashboard
+        run: python tools/pages/build_site.py --repo-root . --out _site --runs 300
       - uses: actions/upload-pages-artifact@v3
         with:
           path: _site
