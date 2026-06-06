@@ -94,7 +94,64 @@ def gen_ijepa():
     return {"frames": out}
 
 
-GENERATORS = {"imagination": gen_imagination, "nav2": gen_nav2, "ijepa": gen_ijepa}
+def _scene_change_frames():
+    """Smooth motion -> scene cut -> different scene -> cut back (256x256 RGB)."""
+    def gradient():
+        yy, xx = np.mgrid[0:256, 0:256]
+        return np.stack([xx / 256 * 180 + 40, yy / 256 * 120 + 30, np.full((256, 256), 90)], 2).astype(np.uint8)
+
+    def box(base, cx, s, color):
+        img = base.copy(); img[128 - s:128 + s, max(0, cx - s):cx + s] = color; return img
+
+    def circle(base, cx, color):
+        img = base.copy(); yy, xx = np.mgrid[0:256, 0:256]
+        img[(xx - cx) ** 2 + (yy - 130) ** 2 <= 900] = color; return img
+
+    rng = np.random.default_rng(3)
+    frames = []
+    g = gradient()
+    for k in range(8):
+        frames.append(box(g, 40 + k * 26, 34, [220, 40, 40]))
+    noise = (rng.random((256, 256, 3)) * 255).astype(np.uint8)
+    for k in range(5):
+        frames.append(circle(noise, 80 + k * 22, [40, 220, 90]))
+    for k in range(5):
+        frames.append(box(gradient(), 200 - k * 26, 34, [40, 90, 230]))
+    return frames
+
+
+def gen_compare():
+    """Run BOTH real JEPA encoders on the same sequence: image (I-JEPA) vs
+    video (V-JEPA 2) surprise. Needs a GPU + both sets of weights."""
+    import base64
+    import io
+    from PIL import Image
+
+    frames_img = _scene_change_frames()
+    ijepa = load_model("ijepa", model_id="facebook/ijepa_vith14_1k", device="cuda", dtype="float16")
+    vjepa2 = load_model("vjepa2", entry="vjepa2_vit_large", device="cuda", dtype="float16", clip_len=16)
+
+    out = []
+    for f in frames_img:
+        obs = Observation(image=f)
+        ij = float(ijepa.predict_future(obs, horizon=1).risk)
+        vj = float(vjepa2.predict_future(obs, horizon=1).risk)
+        buf = io.BytesIO()
+        Image.fromarray(f).resize((128, 128), Image.BILINEAR).save(buf, "PNG")
+        out.append({
+            "img": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode(),
+            "ijepa": round(ij, 4),
+            "vjepa2": round(vj, 4),
+        })
+    return {"frames": out}
+
+
+GENERATORS = {
+    "imagination": gen_imagination,
+    "nav2": gen_nav2,
+    "ijepa": gen_ijepa,
+    "compare": gen_compare,
+}
 
 
 def main():

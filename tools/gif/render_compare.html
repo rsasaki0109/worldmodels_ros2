@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#1b1b20}#c{display:block}</style></head>
+<body>
+<canvas id="c" width="760" height="420"></canvas>
+<script>
+const ctx=document.getElementById('c').getContext('2d');
+const PX0=392,PX1=734,PY0=110,PY1=300,SMAX=0.40,THR=0.15;
+const IJ='#5ad1ff', VJ='#ffae4d';
+function text(s,x,y,sz,col,al){ctx.fillStyle=col;ctx.font=`${sz}px system-ui,sans-serif`;ctx.textAlign=al||'left';ctx.fillText(s,x,y);}
+function xmap(k,N){return PX0+(N<2?0:k/(N-1))*(PX1-PX0);}
+function ymap(s){return PY1-Math.max(0,Math.min(1,s/SMAX))*(PY1-PY0);}
+
+window.setData=(D)=>{
+  window.DATA=D;
+  window.IMGS=D.frames.map(f=>{const im=new Image();im.src=f.img;return im;});
+  Promise.all(window.IMGS.map(im=>im.decode().catch(()=>{}))).then(()=>{window.imagesReady=true;});
+};
+
+function curve(key,col,i,N){
+  const F=window.DATA.frames;
+  ctx.strokeStyle=col;ctx.lineWidth=3;ctx.beginPath();
+  for(let k=0;k<=i;k++){const x=xmap(k,N),y=ymap(F[k][key]);k?ctx.lineTo(x,y):ctx.moveTo(x,y);}
+  ctx.stroke();
+  const cx=xmap(i,N),cy=ymap(F[i][key]);
+  ctx.fillStyle=col;ctx.beginPath();ctx.arc(cx,cy,5,0,7);ctx.fill();
+}
+
+function renderFrame(i){
+  const D=window.DATA,F=D.frames,N=F.length,fr=F[i];
+  ctx.fillStyle='#1b1b20';ctx.fillRect(0,0,760,420);
+  text('world_model_ros2 — image vs video World Model',28,32,20,'#f0f0f3');
+  text('same camera stream · I-JEPA (per-frame) vs V-JEPA 2 (clip) surprise',28,54,13,'#8b8b96');
+  text('real models · GPU',28,408,12,'#6a6a74');
+
+  // camera
+  const IX=28,IY=72,IS=300;
+  ctx.fillStyle='#000';ctx.fillRect(IX,IY,IS,IS);
+  if(window.IMGS&&window.IMGS[i])ctx.drawImage(window.IMGS[i],IX,IY,IS,IS);
+  const anom=fr.ijepa>THR||fr.vjepa2>THR;
+  ctx.strokeStyle=anom?'#ff5a4a':'#33333c';ctx.lineWidth=anom?4:1;ctx.strokeRect(IX-0.5,IY-0.5,IS+1,IS+1);
+  text('camera',IX+8,IY+22,15,'#fff');
+
+  // plot
+  text('surprise',PX0,PY0-14,14,'#9a9aa6');
+  ctx.strokeStyle='#33333c';ctx.lineWidth=1;ctx.strokeRect(PX0-0.5,PY0-0.5,PX1-PX0+1,PY1-PY0+1);
+  ctx.setLineDash([5,4]);ctx.strokeStyle='rgba(255,90,74,0.55)';
+  ctx.beginPath();ctx.moveTo(PX0,ymap(THR));ctx.lineTo(PX1,ymap(THR));ctx.stroke();ctx.setLineDash([]);
+  text('anomaly',PX1,ymap(THR)-5,11,'rgba(255,120,108,0.85)','right');
+  curve('ijepa',IJ,i,N);
+  curve('vjepa2',VJ,i,N);
+
+  // legend + readouts
+  text('● I-JEPA  (image)',PX0,PY1+34,14,IJ);
+  text(fr.ijepa.toFixed(3),PX1,PY1+34,16,IJ,'right');
+  text('● V-JEPA 2 (video)',PX0,PY1+60,14,VJ);
+  text(fr.vjepa2.toFixed(3),PX1,PY1+60,16,VJ,'right');
+  text('one camera stream → two World Models, one contract',PX0,PY1+92,12,'#7d7d88');
+}
+window.renderFrame=renderFrame;window.__ready=true;
+</script>
+</body></html>
