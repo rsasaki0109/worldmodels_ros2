@@ -50,9 +50,12 @@ def main():
     boundaries = {PAN, 2 * PAN}            # indices whose step crosses a scene cut
 
     dev = os.environ.get("WM_DEVICE", "cpu")
-    print(f"loading I-JEPA on {dev} ...")
-    wm = load_model("ijepa", model_id="facebook/ijepa_vith14_1k", device=dev,
-                    dtype="float16" if dev == "cuda" else "float32")
+    adapter = os.environ.get("WM_ADAPTER", "ijepa")     # ijepa (image) or vjepa2 (video)
+    dtype = "float16" if dev == "cuda" else "float32"
+    kw = {"model_id": "facebook/ijepa_vith14_1k"} if adapter == "ijepa" \
+        else {"entry": "vjepa2_vit_large", "clip_len": 8}
+    print(f"loading {adapter} on {dev} ...")
+    wm = load_model(adapter, device=dev, dtype=dtype, **kw)
 
     within, across = [], []
     prev = None
@@ -65,7 +68,7 @@ def main():
 
     wmean, wmax = float(np.mean(within)), float(np.max(within))
     amean = float(np.mean(across))
-    print("=== surprise on REAL LeRobot SO-101 footage (I-JEPA) ===")
+    print(f"=== surprise on REAL LeRobot SO-101 footage ({adapter}) ===")
     print(f"within-scene surprise : mean {wmean:.3f}  max {wmax:.3f}  (consecutive same-scene frames)")
     print(f"scene-change surprise : {[round(a,3) for a in across]}  mean {amean:.3f}")
     print(f"separation ratio      : {amean / (wmean + 1e-9):.1f}x  "

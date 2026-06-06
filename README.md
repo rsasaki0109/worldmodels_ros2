@@ -334,11 +334,17 @@ ros2 launch world_model_bringup monitor_demo.launch.py adapter:=ijepa
 ros2 topic echo /world_model_monitor/anomaly
 ```
 
-**Validated on real public data.** On real LeRobot SO-101 footage through
-I-JEPA (`test/validate_real_surprise.py`), surprise is cleanly separable:
-within-scene mean **0.010** (max 0.081) vs scene/view-change **~0.20** — every
-scene change exceeds every within-scene frame (**20× mean separation**). The
-anomaly signal is semantically grounded, not noise.
+**Validated on real public data** (`test/validate_real_surprise.py`, real
+LeRobot SO-101 footage):
+
+| adapter | within-scene surprise | scene/view change | separation |
+|---|---|---|---|
+| `ijepa` (image, per-frame) | mean 0.010 (max 0.081) | ~0.20 | **20×**, fully separable |
+| `vjepa2` (video, 8-frame clip) | mean 0.016 (max 0.109) | ~0.08 | 4.8× (smoothed) |
+
+The anomaly signal is semantically grounded, not noise. The image encoder is
+sharpest for *instantaneous* events; the video encoder's clip buffer trades
+sharpness for temporal context (its surprise rises over the whole transition).
 
 The detector core (`world_model_py.anomaly.AnomalyDetector`) is ROS-free and
 unit-tested. This follows recent World-Model failure/OOD-monitoring work, e.g.
