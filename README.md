@@ -345,6 +345,11 @@ Contributions are welcome — especially new **adapters** (model backends) and
 for the build/test flow and the design rules that keep adapters ROS-free and
 GPU-optional.
 
+Adapters can even live in a **separate pip package** and register via an entry
+point — see the runnable
+[example adapter](examples/world_model_adapter_example/) (`pip install -e .` →
+`world-model list` shows it, no edits to this repo).
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

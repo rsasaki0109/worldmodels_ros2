@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=61"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wm-example-adapter"
+version = "0.1.0"
+description = "Example external World Model adapter for world_model_ros2 (entry-point demo)"
+requires-python = ">=3.10"
+dependencies = ["numpy"]
+# world_model_py is provided by the ROS 2 workspace, not PyPI, so it is not
+# listed here; source the workspace before using this adapter.
+
+[project.entry-points."world_model_ros2.adapters"]
+example = "wm_example_adapter:make_example_adapter"
+
+[tool.setuptools]
+packages = ["wm_example_adapter"]
