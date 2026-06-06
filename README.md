@@ -306,6 +306,10 @@ local↔remote round-trip is tested over real HTTP with stdlib only — the
 
 ![Nav2 trajectory scoring by World Model risk](docs/nav2_scoring.gif)
 
+<sub>A fan of candidate paths from the robot, coloured by model-based risk
+(green = safe → red = risky); the safest is highlighted and the robot follows
+it. Real scorer output (`path_to_action` + `dummy.score_trajectory`).</sub>
+
 Rank candidate paths by model-based risk before the robot commits to one — a
 mock of a Nav2 controller critic (a service today, a compiled `nav2_core`
 plugin later). Each path becomes a body-frame action sequence and is scored by
