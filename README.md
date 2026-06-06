@@ -300,6 +300,13 @@ paths are published as risk-coloured (green→red) markers for RViz.
   mock ✅, remote adapter + reference server (Cosmos/DreamZero-ready) ✅,
   benchmark dashboard, VLA Zoo / Walking Zoo examples.
 
+## Contributing
+
+Contributions are welcome — especially new **adapters** (model backends) and
+**consumers** (Nav2 / Autoware / VLA / viz). See [CONTRIBUTING.md](CONTRIBUTING.md)
+for the build/test flow and the design rules that keep adapters ROS-free and
+GPU-optional.
+
 ## License
 
 Apache-2.0. See [LICENSE](LICENSE).

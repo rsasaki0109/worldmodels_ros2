@@ -1,0 +1,32 @@
+name: Feature request
+description: Suggest an adapter, consumer, or capability
+labels: ["enhancement"]
+body:
+  - type: textarea
+    id: problem
+    attributes:
+      label: What would you like to use World Models for in ROS 2?
+      description: The use case / problem, not just the solution.
+    validations:
+      required: true
+  - type: dropdown
+    id: area
+    attributes:
+      label: Area
+      options:
+        - New adapter (model backend)
+        - New consumer (Nav2 / Autoware / VLA / viz)
+        - Dataset / rosbag conversion
+        - Message contract (world_model_msgs)
+        - Benchmark / tooling
+        - Other
+    validations:
+      required: true
+  - type: textarea
+    id: idea
+    attributes:
+      label: Proposed approach (optional)
+      description: How it might fit the runtime/adapter boundary.
+  - type: markdown
+    attributes:
+      value: "Note: this project connects *existing* models — it does not train foundation models."
