@@ -288,6 +288,12 @@ Supported state/action types: `nav_msgs/Odometry`, `sensor_msgs/JointState`,
 > counts consistent), **not** against the `lerobot` loader (not a dependency
 > here). Verify against your `lerobot` version before training.
 
+**Validated on real public data.** `test/validate_real_lerobot.py` builds a
+rosbag2 from a public **LeRobot SO-101** episode (real camera video + real 6-DoF
+joint state/action), converts it, and confirms the round-trip: 24/24 frames
+kept, `state`/`action` shapes `[6]`, and the real joint values preserved
+(`MATCH`). So the converter works on genuine robot data, not just synthetic bags.
+
 ## Remote adapters (Cosmos / DreamZero)
 
 Heavy World Foundation Models don't fit on a 16 GB GPU, so they run on another
