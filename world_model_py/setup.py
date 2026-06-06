@@ -23,6 +23,7 @@ setup(
             "runtime_node = world_model_py.runtime_node:main",
             "monitor_node = world_model_py.monitor_node:main",
             "sample_publisher = world_model_py.sample_publisher:main",
+            "camera_sim = world_model_py.camera_sim:main",
             # standalone CLI + reference remote server (also usable without ROS)
             "world-model = world_model_py.cli:main",
             "world-model-server = world_model_py.server:main",

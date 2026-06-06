@@ -322,6 +322,10 @@ out-of-distribution scene — **without needing any failure data**.
 ```bash
 ros2 run world_model_py monitor_node --ros-args -p adapter:=ijepa
 #   ~/surprise (Float32) · ~/anomaly_threshold (Float32) · ~/anomaly (Bool)
+
+# one-command demo: a synthetic camera with periodic occlusion events + monitor
+ros2 launch world_model_bringup monitor_demo.launch.py adapter:=ijepa
+ros2 topic echo /world_model_monitor/anomaly
 ```
 
 The detector core (`world_model_py.anomaly.AnomalyDetector`) is ROS-free and
