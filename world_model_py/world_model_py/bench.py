@@ -129,3 +129,63 @@ def bench_to_file(adapter_name: str, out_path: str, **kwargs) -> BenchResult:
     with open(out_path, "w", encoding="utf-8") as fh:
         fh.write(render_html(result))
     return result
+
+
+def render_comparison_html(results: list, title: str = "adapter comparison") -> str:
+    """A single evidence dashboard comparing several BenchResults."""
+    cols = [
+        ("adapter", lambda r: r.adapter),
+        ("device", lambda r: r.device),
+        ("remote", lambda r: "yes" if r.remote else "no"),
+        ("p50 (ms)", lambda r: round(r.latency_ms_p50, 3)),
+        ("p95 (ms)", lambda r: round(r.latency_ms_p95, 3)),
+        ("mean (ms)", lambda r: round(r.latency_ms_mean, 3)),
+        ("throughput (Hz)", lambda r: round(r.throughput_hz, 1)),
+        ("VRAM (MB)", lambda r: "n/a" if r.vram_peak_mb is None else round(r.vram_peak_mb, 1)),
+    ]
+    max_p95 = max((r.latency_ms_p95 for r in results), default=1.0) or 1.0
+
+    head = "".join(f"<th>{html.escape(c)}</th>" for c, _ in cols)
+    rows = ""
+    for r in results:
+        cells = "".join(f"<td>{html.escape(str(fn(r)))}</td>" for _, fn in cols)
+        pct = min(100.0, 100.0 * r.latency_ms_p95 / max_p95)
+        bar = (
+            f'<td><div class="bar"><div class="fill" style="width:{pct:.1f}%"></div>'
+            f'</div></td>'
+        )
+        rows += f"<tr>{cells}{bar}</tr>"
+
+    return f"""<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<title>world_model_ros2 &middot; {html.escape(title)}</title>
+<style>
+ body{{font-family:system-ui,sans-serif;margin:2rem;color:#1a1a1a}}
+ h1{{font-size:1.3rem}} .tag{{color:#666}}
+ table{{border-collapse:collapse;margin-top:1rem}}
+ th,td{{border:1px solid #ddd;padding:.4rem .8rem;text-align:left}}
+ th{{background:#f5f5f5}}
+ .bar{{background:#eee;width:160px;height:12px;border-radius:6px;overflow:hidden}}
+ .fill{{background:#3b82f6;height:100%}}
+</style></head><body>
+<h1>world_model_ros2 &middot; {html.escape(title)}</h1>
+<p class="tag">Evidence, not vibes. Latency / throughput / VRAM across adapters
+(bar = p95 latency, relative).</p>
+<table><tr>{head}<th>p95</th></tr>{rows}</table>
+<p class="tag">python {html.escape(platform.python_version())} &middot;
+{html.escape(platform.platform())}</p>
+</body></html>"""
+
+
+def compare_to_file(specs: list, out_path: str, runs: int = 50, horizon: int = 8) -> list:
+    """Benchmark several adapters and write one comparison HTML.
+
+    ``specs`` is a list of dicts: ``{"name": "dummy"}`` or
+    ``{"name": "remote", "kwargs": {"url": ...}}``.
+    """
+    results = []
+    for spec in specs:
+        results.append(run_bench(spec["name"], runs=runs, horizon=horizon, **spec.get("kwargs", {})))
+    with open(out_path, "w", encoding="utf-8") as fh:
+        fh.write(render_comparison_html(results))
+    return results

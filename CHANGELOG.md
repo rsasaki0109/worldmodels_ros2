@@ -15,6 +15,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - README hero GIFs (imagined occupancy, Nav2 scoring, real I-JEPA surprise) and
   a reproducible generator under `tools/gif/`.
 - `CONTRIBUTING.md`, issue forms, and a PR template.
+- `world-model bench-compare` — one evidence dashboard across adapters; spins a
+  local reference server to measure the remote adapter's HTTP overhead.
 
 ## [0.1.0] - 2026-06-06
 

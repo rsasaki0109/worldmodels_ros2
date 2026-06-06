@@ -63,6 +63,10 @@ cd world_model_py
 python -m world_model_py.cli list
 python -m world_model_py.cli bench --adapter dummy --out report.html
 # -> report.html with latency p50/p95, throughput, VRAM
+
+python -m world_model_py.cli bench-compare --adapters dummy,remote --out compare.html
+# -> one dashboard comparing adapters; spins a local server to measure the
+#    remote adapter's HTTP overhead (e.g. dummy ~0.6ms vs remote ~11ms p50)
 ```
 
 ### 2. ROS 2 runtime
