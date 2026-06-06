@@ -18,11 +18,19 @@ def _make_ijepa(**kwargs) -> WorldModelAdapter:
     return make_ijepa_adapter(**kwargs)
 
 
+def _make_vjepa2(**kwargs) -> WorldModelAdapter:
+    # Lazy: pulls torch / torch.hub V-JEPA 2 only when actually used.
+    from .adapters.jepa import make_vjepa2_adapter
+
+    return make_vjepa2_adapter(**kwargs)
+
+
 # name -> factory(**kwargs) -> adapter
 _REGISTRY: Dict[str, Callable[..., WorldModelAdapter]] = {
     "dummy": DummyAdapter,
     "remote": RemoteAdapter,
     "ijepa": _make_ijepa,
+    "vjepa2": _make_vjepa2,
 }
 
 

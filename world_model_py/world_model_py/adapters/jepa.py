@@ -45,9 +45,10 @@ class IJepaAdapter(WorldModelAdapter):
 
     name = "ijepa"
 
-    def __init__(self, encoder: FrameEncoder, dt: float = 0.1):
+    def __init__(self, encoder: FrameEncoder, dt: float = 0.1, name: str = "ijepa"):
         self._enc = encoder
         self.dt = float(dt)
+        self.name = name
         self._prev: Optional[np.ndarray] = None
 
     def _latent(self, obs: Observation) -> np.ndarray:
@@ -87,7 +88,7 @@ class IJepaAdapter(WorldModelAdapter):
             latents=[latent.copy() for _ in range(horizon)],   # persistence rollout
             risk=score,
             risk_confidence=confidence,
-            risk_label="ijepa-surprise",
+            risk_label=f"{self.name}-surprise",
         )
 
     def reset(self) -> None:
@@ -198,3 +199,89 @@ def make_ijepa_adapter(**kwargs) -> IJepaAdapter:
     adapter_dt = kwargs.pop("dt", 0.1)
     encoder = _HFEncoder(**kwargs)
     return IJepaAdapter(encoder, dt=adapter_dt)
+
+
+class _VJepa2Encoder:
+    """V-JEPA 2 video encoder (loaded via torch.hub) wrapped as a FrameEncoder.
+
+    V-JEPA 2 is a *video* model, so this keeps a rolling buffer of recent frames
+    and encodes the whole clip on each call (the encoder interpolates its
+    positional encoding, so the clip length need not be the training default).
+    torch / torch.hub are imported lazily.
+    """
+
+    _MEAN = (0.485, 0.456, 0.406)
+    _STD = (0.229, 0.224, 0.225)
+
+    def __init__(
+        self,
+        entry: str = "vjepa2_vit_large",
+        repo: str = "facebookresearch/vjepa2",
+        device: str = "auto",
+        dtype: str = "float16",
+        clip_len: int = 16,
+        img_size: int = 256,
+    ):
+        import torch
+        from collections import deque
+
+        if clip_len % 2 != 0:
+            clip_len += 1  # tubelet_size is 2
+        self.entry = entry
+        self.clip_len = int(clip_len)
+        self.img_size = int(img_size)
+        if device == "auto":
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+        self.device = device
+        self._torch = torch
+        self._dtype = getattr(torch, dtype) if device == "cuda" else torch.float32
+
+        loaded = torch.hub.load(repo, entry, trust_repo=True)
+        self.encoder = loaded[0] if isinstance(loaded, (tuple, list)) else loaded
+        self.encoder.to(device=device, dtype=self._dtype).eval()
+        self._buffer = deque(maxlen=self.clip_len)
+        self._latent_dim = None
+
+    def _prep(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
+        from PIL import Image
+
+        img = np.asarray(image_hwc_uint8)
+        if img.ndim == 2:
+            img = np.repeat(img[:, :, None], 3, axis=2)
+        pil = Image.fromarray(img.astype(np.uint8)[:, :, :3]).resize(
+            (self.img_size, self.img_size), Image.BILINEAR
+        )
+        arr = np.asarray(pil, dtype=np.float32) / 255.0
+        arr = (arr - np.array(self._MEAN, np.float32)) / np.array(self._STD, np.float32)
+        return np.transpose(arr, (2, 0, 1))  # (3, H, W)
+
+    def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
+        torch = self._torch
+        self._buffer.append(self._prep(image_hwc_uint8))
+        frames = list(self._buffer)
+        while len(frames) < self.clip_len:          # pad front by repeating oldest
+            frames.insert(0, frames[0])
+        clip = np.stack(frames, axis=1)             # (3, T, H, W)
+        x = torch.from_numpy(clip[None]).to(self.device, self._dtype)  # (1, 3, T, H, W)
+        with torch.no_grad():
+            out = self.encoder(x)                    # (1, num_tokens, dim)
+        latent = out.mean(dim=1).squeeze(0).float().cpu().numpy()
+        self._latent_dim = int(latent.shape[-1])
+        return latent.astype(np.float32)
+
+    def info(self) -> dict:
+        return {
+            "entry": self.entry,
+            "device": self.device,
+            "dtype": str(self._dtype).replace("torch.", ""),
+            "clip_len": self.clip_len,
+            "latent_dim": self._latent_dim,
+        }
+
+
+def make_vjepa2_adapter(**kwargs) -> IJepaAdapter:
+    """Registry factory: a V-JEPA 2 video adapter (camera clip -> latent ->
+    surprise). Imports torch / torch.hub only when called."""
+    adapter_dt = kwargs.pop("dt", 0.1)
+    encoder = _VJepa2Encoder(**kwargs)
+    return IJepaAdapter(encoder, dt=adapter_dt, name="vjepa2")

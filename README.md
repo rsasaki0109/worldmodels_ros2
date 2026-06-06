@@ -194,7 +194,7 @@ risk = wm.score_trajectory(obs, ActionCondition(action=np.zeros((8, 2), np.float
 ```
 
 Adding a backend = subclass `WorldModelAdapter`, implement `predict_future`,
-and `register("vjepa2", VJepa2Adapter)`.
+and `register("mymodel", MyAdapter)`.
 
 ### Real model: JEPA latent server (`ijepa`)
 
@@ -205,9 +205,18 @@ spikes (~0.35) on scene changes — actual model output, not a mock.</sub>
 
 The first real backend turns a camera stream into latents and a **surprise**
 score (cosine distance between successive latents — a model-based novelty /
-anomaly signal). It loads a self-supervised JEPA image encoder (I-JEPA today;
-V-JEPA2 video weights drop into the same `jepa.py` once `transformers` ships
-them).
+anomaly signal). Two JEPA encoders ship:
+
+- **`ijepa`** — I-JEPA image encoder via `transformers` (per-frame latent).
+- **`vjepa2`** — **V-JEPA 2** video encoder via `torch.hub`
+  (`facebookresearch/vjepa2`): buffers a rolling clip of frames and encodes the
+  clip, so surprise reflects *temporal* novelty. Verified on a 16 GB GPU
+  (ViT-L, fp16, clip_len 16): surprise spikes on scene cuts.
+
+```python
+load_model("ijepa",  model_id="facebook/ijepa_vith14_1k", device="cuda")
+load_model("vjepa2", entry="vjepa2_vit_large", device="cuda")  # downloads weights
+```
 
 ```bash
 # optional extras, not required for dummy/remote or CI:

@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`vjepa2` adapter** — real V-JEPA 2 video encoder via `torch.hub`
+  (`facebookresearch/vjepa2`): rolling-clip latent + temporal surprise. Verified
+  on a 16 GB GPU (ViT-L, fp16). torch stays optional/lazy-imported.
+- **`world_model_costmap`** — a compiled `nav2_costmap_2d::Layer` (C++/pluginlib)
+  that stamps predicted `FutureOccupancy` into the Nav2 costmap.
+- README hero GIFs (imagined occupancy, Nav2 scoring, real I-JEPA surprise) and
+  a reproducible generator under `tools/gif/`.
+- `CONTRIBUTING.md`, issue forms, and a PR template.
+
 ## [0.1.0] - 2026-06-06
 
 First public release: a ROS 2 runtime / adapter / benchmark / visualization

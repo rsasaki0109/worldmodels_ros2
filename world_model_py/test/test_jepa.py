@@ -98,7 +98,16 @@ def test_reset_clears_baseline():
     assert pred.risk_confidence == 0.0
 
 
-def test_registry_lists_ijepa():
+def test_registry_lists_jepa_backends():
     from world_model_py.registry import available_models
 
-    assert "ijepa" in available_models()
+    models = available_models()
+    assert "ijepa" in models
+    assert "vjepa2" in models
+
+
+def test_name_param_sets_label_and_encoding():
+    wm = IJepaAdapter(FakeEncoder([[1.0, 0.0], [0.0, 1.0]]), name="vjepa2")
+    assert wm.encode(_obs()).encoding == "vjepa2"
+    pred = wm.predict_future(_obs())
+    assert pred.risk_label == "vjepa2-surprise"
