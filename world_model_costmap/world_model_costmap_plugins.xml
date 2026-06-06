@@ -1,0 +1,9 @@
+<library path="world_model_layer">
+  <class type="world_model_costmap::WorldModelLayer" base_class_type="nav2_costmap_2d::Layer">
+    <description>
+      Stamps a World Model's predicted FutureOccupancy (union over the horizon)
+      into the Nav2 costmap as lethal obstacles, so planners and controllers
+      avoid where the model expects future obstacles.
+    </description>
+  </class>
+</library>

@@ -121,6 +121,7 @@ own colors.)
 | `world_model_viz` | ament_python | imagination viewer: imagined `FutureOccupancy` + `RiskScore` → RViz `MarkerArray` |
 | `world_model_datasets` | ament_python | `export_lerobot`: rosbag2 → LeRobot-compatible dataset (parquet + mp4 + meta), GPU-free |
 | `world_model_nav2` | ament_python | score Nav2 candidate trajectories by model-based risk (`ScoreTrajectories` service + risk-coloured path markers) |
+| `world_model_costmap` | ament_cmake (C++) | **compiled** `nav2_costmap_2d::Layer` that stamps predicted `FutureOccupancy` into the costmap |
 | `world_model_bringup` | ament_cmake | launch files + demo config |
 
 ## Architecture
@@ -290,6 +291,11 @@ Service `~/score_trajectories` (`world_model_msgs/srv/ScoreTrajectories`) takes
 `nav_msgs/Path[]` and returns a risk per path plus the safest index; scored
 paths are published as risk-coloured (green→red) markers for RViz.
 
+For the **production path**, `world_model_costmap` is a *compiled*
+`nav2_costmap_2d::Layer` that stamps the model's predicted `FutureOccupancy`
+straight into the Nav2 costmap — so any planner/controller avoids predicted
+obstacles. See [world_model_costmap/README.md](world_model_costmap/README.md).
+
 ## Roadmap (90-day MVP)
 
 - **0–30d (this scaffold):** msgs, adapter SDK, dummy + remote adapters,
@@ -297,8 +303,8 @@ paths are published as risk-coloured (green→red) markers for RViz.
 - **31–60d:** JEPA latent adapter (image→latent→surprise) ✅, RViz imagination
   markers ✅, rosbag2 replay demo (next).
 - **61–90d:** rosbag2 → LeRobotDataset converter ✅, Nav2 trajectory-scoring
-  mock ✅, remote adapter + reference server (Cosmos/DreamZero-ready) ✅,
-  benchmark dashboard, VLA Zoo / Walking Zoo examples.
+  mock ✅, compiled Nav2 costmap layer ✅, remote adapter + reference server
+  (Cosmos/DreamZero-ready) ✅, benchmark dashboard, VLA Zoo / Walking Zoo examples.
 
 ## Contributing
 
