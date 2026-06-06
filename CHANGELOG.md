@@ -7,6 +7,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Prediction-quality metrics** (`world_model_py.metrics`) — occupancy IoU,
+  future-occupancy IoU vs a reference, temporal consistency, and latent drift;
+  pure numpy, the reusable core for an Autoware/Nav2 evaluator.
+- **Runnable external adapter example** (`examples/`) registered purely via an
+  entry point — install it and `world-model list` shows it.
 - **Entry-point adapter discovery** — external pip packages can add World Model
   backends under the `world_model_ros2.adapters` group; `load_model()` /
   `world-model list` pick them up with no edits to this repo.
