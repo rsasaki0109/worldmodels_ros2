@@ -17,6 +17,20 @@ using *existing* World Models in robotics and autonomous driving.**
 <sub>Imagined `FutureOccupancy` (green = near, red = far) and action-conditioned
 `RiskScore` from one ROS 2 call — here the GPU-free `dummy` adapter.</sub>
 
+## Highlights
+
+- **Two real model backends, one contract** — I-JEPA (image) and V-JEPA 2
+  (video), both GPU-verified, swap by name (`load_model("vjepa2")`).
+- **Local ⟷ remote split** — run heavy models (Cosmos/DreamZero) on a GPU box
+  over a shared JSON wire; ROS 2 clients are unchanged.
+- **Compiled Nav2 costmap layer** — predicted occupancy flows straight into the
+  Nav2 costmap (real `nav2_costmap_2d::Layer`, not a mock).
+- **rosbag2 → LeRobot** dataset export, **GPU-free**.
+- **RViz + Foxglove** imagination viewer (a playable MCAP clip is bundled).
+- **Live benchmark dashboard**, republished on every push →
+  <https://rsasaki0109.github.io/worldmodels_ros2/>.
+- **GPU-free CI** — adapters are pure numpy, tested with no ROS and no GPU.
+
 `world_model_ros2` is **not** another foundation model. It is the
 [Nav2](https://github.com/ros-navigation/navigation2)/`transformers`-style
 **boundary** that lets a ROS 2 developer call a World Model the same way every
