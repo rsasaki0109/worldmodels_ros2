@@ -7,6 +7,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 ## [Unreleased]
 
 ### Added
+- **Runtime anomaly / OOD monitor** — `AnomalyDetector` (self-calibrating
+  adaptive threshold on the World Model's latent surprise, no failure data
+  needed) + `monitor_node` (publishes `~/surprise`, `~/anomaly_threshold`,
+  `~/anomaly`). Follows recent world-model failure/OOD-monitoring research.
 - **Prediction-quality metrics** (`world_model_py.metrics`) — occupancy IoU,
   future-occupancy IoU vs a reference, temporal consistency, and latent drift;
   pure numpy, the reusable core for an Autoware/Nav2 evaluator.

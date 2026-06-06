@@ -147,10 +147,13 @@ def gen_compare():
 
 
 def gen_hero():
-    """Hero GIF: REAL robot camera footage (LeRobot SO-101 pick-and-place) fed to
-    the real V-JEPA 2 encoder. Surprise stays low while the robot moves and spikes
-    when the camera view changes (side -> up -> side). Needs network (Hugging Face
-    LeRobot dataset), ffmpeg, and a GPU. Output is the derived GIF, not the videos.
+    """Hero GIF: a *runtime anomaly monitor*. Real LeRobot SO-101 robot-camera
+    footage runs through the real V-JEPA 2 encoder; the AnomalyDetector
+    self-calibrates on nominal operation and flags an unexpected event (here the
+    camera is briefly occluded — an object passes in front of the lens). Follows
+    World-Model failure/OOD-monitoring research (no failure data needed).
+
+    Needs network (Hugging Face LeRobot dataset), ffmpeg, and a GPU.
     """
     import base64
     import glob
@@ -161,47 +164,53 @@ def gen_hero():
     import urllib.request
     from PIL import Image
 
+    from world_model_py.anomaly import AnomalyDetector
+
     base = "https://huggingface.co/datasets/lerobot/svla_so101_pickplace/resolve/main/videos"
     SIDE = base + "/observation.images.side/chunk-000/file-000.mp4"
-    UP = base + "/observation.images.up/chunk-000/file-000.mp4"
-    PAN = 8
+    N, EV0, EV1 = 24, 14, 20                  # frames; occlusion event window
 
     tmp = tempfile.mkdtemp()
+    side = os.path.join(tmp, "side.mp4")
+    urllib.request.urlretrieve(SIDE, side)
+    d = os.path.join(tmp, "fr")
+    os.makedirs(d, exist_ok=True)
+    subprocess.run(
+        ["ffmpeg", "-y", "-ss", "6", "-t", "6.4", "-i", side,
+         "-vf", "fps=4,crop=480:480:80:0,scale=256:256", os.path.join(d, "f%03d.png")],
+        check=True, capture_output=True,
+    )
+    files = sorted(glob.glob(os.path.join(d, "*.png")))[:N]
+    frames = [np.asarray(Image.open(f).convert("RGB")).astype(np.uint8) for f in files]
 
-    def dl(url, name):
-        p = os.path.join(tmp, name)
-        urllib.request.urlretrieve(url, p)
-        return p
+    # occlude the event window: a dark soft blob sweeps across (object near lens)
+    yy, xx = np.mgrid[0:256, 0:256]
+    for i in range(EV0, EV1):
+        prog = (i - EV0) / max(1, (EV1 - 1 - EV0))
+        cx = int(40 + prog * 200)
+        a = np.clip(1.25 - (((xx - cx) / 120.0) ** 2 + ((yy - 128) / 165.0) ** 2), 0, 1) * 0.93
+        frames[i] = (frames[i] * (1 - a[..., None]) + np.array([16, 16, 20]) * a[..., None]).astype(np.uint8)
 
-    side_mp4, up_mp4 = dl(SIDE, "side.mp4"), dl(UP, "up.mp4")
-
-    def seg(mp4, ss, tag):
-        d = os.path.join(tmp, tag)
-        os.makedirs(d, exist_ok=True)
-        subprocess.run(
-            ["ffmpeg", "-y", "-ss", str(ss), "-t", "2.4", "-i", mp4,
-             "-vf", "fps=4,crop=480:480:80:0,scale=256:256", os.path.join(d, "f%03d.png")],
-            check=True, capture_output=True,
-        )
-        files = sorted(glob.glob(os.path.join(d, "*.png")))[:PAN]
-        return [np.asarray(Image.open(f).convert("RGB")).astype(np.uint8) for f in files]
-
-    # one robot, three views/episodes -> a cut (view change) at PAN and 2*PAN
-    frames = seg(side_mp4, 6, "a") + seg(up_mp4, 10, "b") + seg(side_mp4, 240, "c")
-
-    wm = load_model("vjepa2", entry="vjepa2_vit_large", device="cuda", dtype="float16", clip_len=16)
-    for _ in range(16):                       # prime the clip buffer (no warmup blip)
+    dev = os.environ.get("WM_HERO_DEVICE", "cuda")   # set WM_HERO_DEVICE=cpu if the GPU is busy
+    clip_len = int(os.environ.get("WM_HERO_CLIPLEN", "16"))   # smaller = much faster on CPU
+    prime = int(os.environ.get("WM_HERO_PRIME", "16"))
+    dtype = "float16" if dev == "cuda" else "float32"
+    wm = load_model("vjepa2", entry="vjepa2_vit_large", device=dev, dtype=dtype, clip_len=clip_len)
+    for _ in range(prime):
         wm.predict_future(Observation(image=frames[0]), horizon=1)
     wm.reset()
+    det = AnomalyDetector(window=10, k=4.0, warmup=4, floor=0.02)
 
     out = []
     for f in frames:
-        r = float(wm.predict_future(Observation(image=f), horizon=1).risk)
+        s = float(wm.predict_future(Observation(image=f), horizon=1).risk)
+        r = det.update(s)
         buf = io.BytesIO()
         Image.fromarray(f).resize((200, 200), Image.BILINEAR).save(buf, "JPEG", quality=82)
         out.append({"img": "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode(),
-                    "surprise": round(r, 4)})
-    return {"frames": out, "cuts": [PAN, 2 * PAN]}
+                    "surprise": round(s, 4), "threshold": round(r["threshold"], 4),
+                    "anomaly": bool(r["anomaly"]), "latched": bool(det.latched)})
+    return {"frames": out, "event": [EV0, EV1]}
 
 
 GENERATORS = {

@@ -12,12 +12,13 @@ using *existing* World Models in robotics and autonomous driving.**
 > score trajectories, visualize imagination in RViz, and export rosbag2 data to
 > robot-learning datasets.
 
-![real robot footage through V-JEPA 2, surprise spikes when the view changes](docs/hero.gif)
+![runtime anomaly monitor flagging an unexpected event on real robot footage](docs/hero.gif)
 
-<sub>Real **LeRobot SO-101** robot-camera footage → the real **V-JEPA 2** video
-model on a GPU → **surprise**: the latent stays calm while the robot moves and
-spikes the instant the camera view changes. Actual model output on real robot
-video.</sub>
+<sub>**A practical use:** a runtime anomaly monitor. Real **LeRobot SO-101**
+robot-camera footage → real **V-JEPA 2** latent surprise → a self-calibrating
+threshold (`mean + k·σ`) that flags an unexpected event — here the camera is
+briefly occluded. Calibrates on nominal operation, **no failure data needed**
+(following recent World-Model failure/OOD-monitoring research).</sub>
 
 ## Highlights
 
@@ -307,6 +308,25 @@ ros2 run world_model_py runtime_node --ros-args \
 Endpoints: `POST /predict_future` (FuturePrediction JSON), `GET /health`. The
 local↔remote round-trip is tested over real HTTP with stdlib only — the
 `remote` adapter reproduces the host's output exactly.
+
+## Runtime anomaly / OOD monitor
+
+A practical use of a World Model on a live robot: turn its **latent prediction
+error** (the `ijepa`/`vjepa2` surprise) into a **runtime safety monitor**. It
+self-calibrates on nominal operation (`mean + k·σ`) and raises a flag the moment
+the input leaves the band — an unexpected object, an occluded camera, an
+out-of-distribution scene — **without needing any failure data**.
+
+```bash
+ros2 run world_model_py monitor_node --ros-args -p adapter:=ijepa
+#   ~/surprise (Float32) · ~/anomaly_threshold (Float32) · ~/anomaly (Bool)
+```
+
+The detector core (`world_model_py.anomaly.AnomalyDetector`) is ROS-free and
+unit-tested. This follows recent World-Model failure/OOD-monitoring work, e.g.
+[anomaly detection in MBRL](https://arxiv.org/pdf/2503.02552),
+[failure detection without failure data](https://arxiv.org/html/2503.08558v1),
+and [foundation world models detecting manipulation failures](https://arxiv.org/pdf/2603.06987).
 
 ## Nav2 trajectory scoring (mock)
 
