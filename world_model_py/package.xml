@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>world_model_py</name>
-  <version>0.1.0</version>
+  <version>0.2.0</version>
   <description>
     Python adapter SDK and ROS 2 runtime for World Models: load_model(),
     dummy and remote adapters, a lifecycle runtime node, a sample

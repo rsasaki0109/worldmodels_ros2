@@ -4,7 +4,11 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.2.0] - 2026-06-07
+
+A second real model, a compiled Nav2 plugin, a plugin hub, and the first
+practical runtime application (anomaly/OOD monitoring) — plus benchmarks,
+metrics, demos and a live dashboard.
 
 ### Added
 - **Runtime anomaly / OOD monitor** — `AnomalyDetector` (self-calibrating
@@ -29,6 +33,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - `CONTRIBUTING.md`, issue forms, and a PR template.
 - `world-model bench-compare` — one evidence dashboard across adapters; spins a
   local reference server to measure the remote adapter's HTTP overhead.
+- A live demo landing + benchmark dashboard published to GitHub Pages, and the
+  `camera_sim` + `monitor_demo` one-command anomaly-monitor demo.
 
 ## [0.1.0] - 2026-06-06
 
@@ -68,4 +74,5 @@ layer for using existing World Models. ROS 2 Jazzy.
 - The Nav2 integration is a ROS service mock, not yet a compiled `nav2_core`
   C++ plugin.
 
+[0.2.0]: https://github.com/rsasaki0109/worldmodels_ros2/releases/tag/v0.2.0
 [0.1.0]: https://github.com/rsasaki0109/worldmodels_ros2/releases/tag/v0.1.0
