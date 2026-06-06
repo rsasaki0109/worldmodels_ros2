@@ -3,6 +3,7 @@
 [![ci](https://github.com/rsasaki0109/worldmodels_ros2/actions/workflows/ci.yml/badge.svg)](https://github.com/rsasaki0109/worldmodels_ros2/actions/workflows/ci.yml)
 [![license](https://img.shields.io/badge/license-Apache--2.0-blue.svg)](LICENSE)
 [![ROS 2](https://img.shields.io/badge/ROS%202-Jazzy-22314E.svg)](https://docs.ros.org/en/jazzy/)
+[![benchmark](https://img.shields.io/badge/benchmark-live-3b82f6.svg)](https://rsasaki0109.github.io/worldmodels_ros2/)
 
 **A ROS 2-native runtime, adapter hub, benchmark and visualization layer for
 using *existing* World Models in robotics and autonomous driving.**
@@ -68,6 +69,9 @@ python -m world_model_py.cli bench-compare --adapters dummy,remote --out compare
 # -> one dashboard comparing adapters; spins a local server to measure the
 #    remote adapter's HTTP overhead (e.g. dummy ~0.6ms vs remote ~11ms p50)
 ```
+
+A live version of this dashboard is published to GitHub Pages on every push:
+**<https://rsasaki0109.github.io/worldmodels_ros2/>**.
 
 ### 2. ROS 2 runtime
 

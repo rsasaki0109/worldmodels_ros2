@@ -1,0 +1,47 @@
+name: pages
+
+# Publish a live benchmark dashboard (GPU-free: dummy vs remote-over-HTTP) to
+# GitHub Pages on every push to main. Evidence, not vibes.
+
+on:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+  pages: write
+  id-token: write
+
+concurrency:
+  group: pages
+  cancel-in-progress: true
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python -m pip install --upgrade pip numpy
+      - name: Generate benchmark dashboard
+        working-directory: world_model_py
+        run: |
+          mkdir -p ../_site
+          python -m world_model_py.cli bench-compare \
+            --adapters dummy,remote --runs 300 --out ../_site/index.html
+      - uses: actions/upload-pages-artifact@v3
+        with:
+          path: _site
+
+  deploy:
+    needs: build
+    runs-on: ubuntu-latest
+    environment:
+      name: github-pages
+      url: ${{ steps.deployment.outputs.page_url }}
+    steps:
+      - id: deployment
+        uses: actions/deploy-pages@v4
