@@ -1,0 +1,90 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<style>
+  html,body{margin:0;background:#1b1b20;}
+  #c{display:block;}
+</style></head>
+<body>
+<canvas id="c" width="760" height="420"></canvas>
+<script>
+const cv = document.getElementById('c');
+const ctx = cv.getContext('2d');
+const GP = 340, OX = 36, OY = 56;       // grid pixels + origin
+
+function ramp(frac){            // green (near) -> red (far)
+  frac = Math.max(0, Math.min(1, frac));
+  return [Math.round(255*frac), Math.round(200*(1-frac))+30, 60];
+}
+function text(s, x, y, size, color, align){
+  ctx.fillStyle = color; ctx.font = `${size}px system-ui, sans-serif`;
+  ctx.textAlign = align||'left'; ctx.fillText(s, x, y);
+}
+
+function renderFrame(i){
+  const D = window.DATA;
+  const N = D.frames.length, gs = D.grid_size, cell = GP/gs;
+  const fr = D.frames[i];
+  const cur = Math.min(D.horizon-1, Math.floor(fr.step));
+
+  // background
+  ctx.fillStyle = '#1b1b20'; ctx.fillRect(0,0,cv.width,cv.height);
+  // title
+  text('world_model_ros2 — imagined future occupancy', OX, 30, 20, '#f0f0f3');
+  text('dummy World Model · GPU-free', OX, 404, 13, '#7d7d88');
+
+  // grid frame
+  ctx.strokeStyle = '#33333c'; ctx.lineWidth = 1;
+  ctx.strokeRect(OX-0.5, OY-0.5, GP+1, GP+1);
+
+  // faint streak: every horizon layer (green->far red)
+  for(let k=0;k<D.horizon;k++){
+    const c = ramp(k/(D.horizon-1));
+    const g = D.layers[k];
+    for(let r=0;r<gs;r++) for(let q=0;q<gs;q++){
+      const occ = g[r][q]; if(occ<=12) continue;
+      ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${0.05+0.10*(occ/100)})`;
+      ctx.fillRect(OX+q*cell, OY+r*cell, cell+0.5, cell+0.5);
+    }
+  }
+  // bright current step
+  const cc = ramp(cur/(D.horizon-1));
+  const gc = D.layers[cur];
+  for(let r=0;r<gs;r++) for(let q=0;q<gs;q++){
+    const occ = gc[r][q]; if(occ<=12) continue;
+    ctx.fillStyle = `rgba(${cc[0]},${cc[1]},${cc[2]},${0.45+0.5*(occ/100)})`;
+    ctx.fillRect(OX+q*cell, OY+r*cell, cell+0.5, cell+0.5);
+  }
+  text(`imagining  t+${cur+1} / ${D.horizon}`, OX+4, OY+22, 16, '#ffffff');
+
+  // ---- right panel ----
+  const RX = OX+GP+34;
+  text('horizon', RX, OY+8, 13, '#9a9aa6');
+  // near->far legend bar
+  for(let s=0;s<60;s++){ const c=ramp(s/59); ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`; ctx.fillRect(RX+s*4.6, OY+16, 5, 14); }
+  text('near', RX, OY+46, 12, '#7d7d88');
+  text('far', RX+270, OY+46, 12, '#7d7d88', 'right');
+
+  // playhead ticks
+  for(let k=0;k<D.horizon;k++){
+    const x = RX + k*(276/(D.horizon-1));
+    ctx.fillStyle = (k===cur)?'#ffffff':'#4a4a55';
+    ctx.fillRect(x-2, OY+58, (k===cur)?5:2, 12);
+  }
+
+  // risk bar
+  const ry = OY+120, rw = 276;
+  text('risk (action-conditioned)', RX, ry-10, 13, '#9a9aa6');
+  ctx.fillStyle = '#2a2a33'; ctx.fillRect(RX, ry, rw, 26);
+  const rc = ramp(fr.risk);
+  ctx.fillStyle = `rgb(${rc[0]},${rc[1]},${rc[2]})`; ctx.fillRect(RX, ry, rw*fr.risk, 26);
+  ctx.strokeStyle = '#44444f'; ctx.strokeRect(RX-0.5, ry-0.5, rw+1, 27);
+  text(fr.risk.toFixed(2), RX+rw, ry+44, 22, `rgb(${rc[0]},${rc[1]},${rc[2]})`, 'right');
+
+  // caption
+  text('FutureOccupancy + RiskScore', RX, OY+250, 13, '#7d7d88');
+  text('from one ROS 2 call', RX, OY+270, 13, '#7d7d88');
+}
+window.renderFrame = renderFrame;
+window.__ready = true;
+</script>
+</body></html>

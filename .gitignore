@@ -11,10 +11,8 @@ __pycache__/
 .pytest_cache/
 .venv/
 
-# bench / demo artifacts
+# bench artifact (default output path)
 report.html
-*.html
-!world_model_*/**/*.html
 
 # node (gif tooling)
 node_modules/

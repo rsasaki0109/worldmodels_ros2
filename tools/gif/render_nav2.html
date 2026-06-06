@@ -1,0 +1,98 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#1b1b20}#c{display:block}</style></head>
+<body>
+<canvas id="c" width="760" height="420"></canvas>
+<script>
+const ctx = document.getElementById('c').getContext('2d');
+const SCAN_HOLD = 3, COMMIT = 22;
+
+function ramp(f){ f=Math.max(0,Math.min(1,f)); return [Math.round(255*f), Math.round(200*(1-f))+30, 60]; }
+function rgb(c,a){ return `rgba(${c[0]},${c[1]},${c[2]},${a===undefined?1:a})`; }
+function text(s,x,y,sz,col,al){ ctx.fillStyle=col; ctx.font=`${sz}px system-ui,sans-serif`; ctx.textAlign=al||'left'; ctx.fillText(s,x,y); }
+
+let MAP=null;
+function buildMap(D){
+  let ymin=1e9,ymax=-1e9;
+  for(const c of D.candidates) for(const p of c.pts){ ymin=Math.min(ymin,p[1]); ymax=Math.max(ymax,p[1]); }
+  const maxAbs=Math.max(Math.abs(ymin),Math.abs(ymax),0.5);
+  const px0=96, pyc=224;
+  const scale=Math.min(520/D.world.L, 168/maxAbs);
+  MAP={px0,pyc,scale};
+}
+function S(p){ return [MAP.px0 + p[0]*MAP.scale, MAP.pyc - p[1]*MAP.scale]; }
+
+function poly(pts){ ctx.beginPath(); pts.forEach((p,i)=>{const s=S(p); i?ctx.lineTo(s[0],s[1]):ctx.moveTo(s[0],s[1]);}); }
+
+function robot(){
+  const s=S([0,0]); ctx.fillStyle='#dfe2ea';
+  ctx.beginPath(); ctx.moveTo(s[0]-9,s[1]-8); ctx.lineTo(s[0]+11,s[1]); ctx.lineTo(s[0]-9,s[1]+8); ctx.closePath(); ctx.fill();
+}
+
+function renderFrame(i){
+  const D=window.DATA; if(!MAP) buildMap(D);
+  const C=D.candidates, K=C.length, best=D.best;
+  const risks=C.map(c=>c.risk), rmin=Math.min(...risks), rmax=Math.max(...risks);
+  const norm=r=>(rmax>rmin)?(r-rmin)/(rmax-rmin):0;
+
+  const scanLen=K*SCAN_HOLD;
+  const scanning = i < scanLen;
+  const active = scanning ? Math.floor(i/SCAN_HOLD) : best;
+
+  ctx.fillStyle='#1b1b20'; ctx.fillRect(0,0,760,420);
+  text('world_model_ros2 — Nav2 trajectory scoring', 28, 32, 20, '#f0f0f3');
+  text('rank candidate paths by model-based risk · pick the safest', 28, 54, 13, '#8b8b96');
+  text('dummy World Model · GPU-free', 28, 406, 13, '#6a6a74');
+
+  // candidate paths
+  ctx.lineCap='round'; ctx.lineJoin='round';
+  for(let j=0;j<K;j++){
+    const c=C[j], col=ramp(norm(c.risk));
+    if(scanning){
+      if(j===active){ ctx.lineWidth=6; ctx.strokeStyle=rgb(col,1); }
+      else { ctx.lineWidth=3; ctx.strokeStyle='rgba(120,120,132,0.35)'; }
+    } else {
+      if(j===best){ ctx.lineWidth=8; ctx.strokeStyle=rgb(col,1);
+        ctx.shadowColor=rgb(col,1); ctx.shadowBlur=16; }
+      else { ctx.lineWidth=4; ctx.strokeStyle=rgb(col,0.85); }
+    }
+    poly(c.pts); ctx.stroke(); ctx.shadowBlur=0;
+    // endpoint risk chip
+    const e=S(c.pts[c.pts.length-1]);
+    const showChip = scanning ? (j===active) : true;
+    if(showChip){
+      text(c.risk.toFixed(3), e[0]+8, e[1]+4, 12,
+           (!scanning&&j===best)?'#ffffff':rgb(ramp(norm(c.risk)),0.95));
+    }
+  }
+  robot();
+
+  // readout panel
+  const RX=596;
+  if(scanning){
+    text('evaluating…', RX, 120, 17, '#f0f0f3');
+    text(`candidate ${active+1} / ${K}`, RX, 146, 14, '#9a9aa6');
+    text('risk', RX, 182, 13, '#9a9aa6');
+    const col=ramp(norm(C[active].risk));
+    text(C[active].risk.toFixed(3), RX, 210, 24, rgb(col,1));
+  } else {
+    text('SAFEST', RX, 120, 18, '#7CFC9A');
+    text(`candidate ${best+1} / ${K}`, RX, 146, 14, '#9a9aa6');
+    text('risk', RX, 182, 13, '#9a9aa6');
+    text(C[best].risk.toFixed(3), RX, 210, 26, '#7CFC9A');
+    // robot advancing along the chosen path
+    const p=Math.min(1,(i-scanLen)/(COMMIT-2));
+    const pts=C[best].pts, fidx=p*(pts.length-1), a=Math.floor(fidx), t=fidx-a;
+    const pa=pts[a], pb=pts[Math.min(pts.length-1,a+1)];
+    const wp=[pa[0]+(pb[0]-pa[0])*t, pa[1]+(pb[1]-pa[1])*t], s=S(wp);
+    ctx.fillStyle='#ffffff'; ctx.beginPath(); ctx.arc(s[0],s[1],6,0,7); ctx.fill();
+  }
+  // legend
+  for(let k=0;k<48;k++){ const c=ramp(k/47); ctx.fillStyle=rgb(c); ctx.fillRect(RX+k*3,242,4,11); }
+  text('low', RX, 270, 11, '#7d7d88');
+  text('risk', RX+72, 270, 11, '#7d7d88', 'center');
+  text('high', RX+144, 270, 11, '#7d7d88', 'right');
+}
+window.renderFrame=renderFrame; window.__ready=true;
+</script>
+</body></html>

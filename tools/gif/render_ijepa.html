@@ -1,0 +1,62 @@
+<!doctype html>
+<html lang="en"><head><meta charset="utf-8">
+<style>html,body{margin:0;background:#1b1b20}#c{display:block}</style></head>
+<body>
+<canvas id="c" width="760" height="420"></canvas>
+<script>
+const ctx=document.getElementById('c').getContext('2d');
+const THR=0.15, SMAX=0.40;
+const PX0=392,PX1=734,PY0=104,PY1=300;   // plot box
+function text(s,x,y,sz,col,al){ctx.fillStyle=col;ctx.font=`${sz}px system-ui,sans-serif`;ctx.textAlign=al||'left';ctx.fillText(s,x,y);}
+function xmap(k,N){return PX0+(N<2?0:k/(N-1))*(PX1-PX0);}
+function ymap(s){return PY1-Math.max(0,Math.min(1,s/SMAX))*(PY1-PY0);}
+
+window.setData=(D)=>{
+  window.DATA=D;
+  window.IMGS=D.frames.map(f=>{const im=new Image();im.src=f.img;return im;});
+  Promise.all(window.IMGS.map(im=>im.decode().catch(()=>{}))).then(()=>{window.imagesReady=true;});
+};
+
+function renderFrame(i){
+  const D=window.DATA, F=D.frames, N=F.length, s=F[i].surprise, anom=s>THR;
+  ctx.fillStyle='#1b1b20';ctx.fillRect(0,0,760,420);
+  text('world_model_ros2 — I-JEPA surprise (real model)',28,32,20,'#f0f0f3');
+  text('camera frame → latent → cosine novelty · spikes flag scene changes',28,54,13,'#8b8b96');
+  text('I-JEPA ViT-H/14 · GPU · 1280-d latent',28,408,12,'#6a6a74');
+
+  // camera frame
+  const IX=28,IY=72,IS=300;
+  ctx.fillStyle='#000';ctx.fillRect(IX,IY,IS,IS);
+  if(window.IMGS&&window.IMGS[i]) ctx.drawImage(window.IMGS[i],IX,IY,IS,IS);
+  ctx.strokeStyle=anom?'#ff5a4a':'#33333c';ctx.lineWidth=anom?4:1;
+  ctx.strokeRect(IX-0.5,IY-0.5,IS+1,IS+1);
+  text('camera',IX+8,IY+22,15,'#ffffff');
+
+  // plot frame + threshold
+  text('surprise',PX0,PY0-14,14,'#9a9aa6');
+  ctx.strokeStyle='#33333c';ctx.lineWidth=1;ctx.strokeRect(PX0-0.5,PY0-0.5,PX1-PX0+1,PY1-PY0+1);
+  ctx.setLineDash([5,4]);ctx.strokeStyle='rgba(255,90,74,0.6)';
+  ctx.beginPath();ctx.moveTo(PX0,ymap(THR));ctx.lineTo(PX1,ymap(THR));ctx.stroke();ctx.setLineDash([]);
+  text('anomaly threshold',PX1,ymap(THR)-5,11,'rgba(255,120,108,0.85)','right');
+
+  // full faint curve
+  ctx.strokeStyle='rgba(140,140,152,0.30)';ctx.lineWidth=2;ctx.beginPath();
+  F.forEach((f,k)=>{const x=xmap(k,N),y=ymap(f.surprise);k?ctx.lineTo(x,y):ctx.moveTo(x,y);});ctx.stroke();
+  // bright curve up to i
+  ctx.strokeStyle='#5ad1ff';ctx.lineWidth=3;ctx.beginPath();
+  for(let k=0;k<=i;k++){const x=xmap(k,N),y=ymap(F[k].surprise);k?ctx.lineTo(x,y):ctx.moveTo(x,y);}ctx.stroke();
+  // current dot
+  const cx=xmap(i,N),cy=ymap(s);
+  ctx.fillStyle=anom?'#ff5a4a':'#7CFC9A';
+  if(anom){ctx.shadowColor='#ff5a4a';ctx.shadowBlur=14;}
+  ctx.beginPath();ctx.arc(cx,cy,6,0,7);ctx.fill();ctx.shadowBlur=0;
+
+  // readouts
+  text('surprise',PX0,PY1+34,13,'#9a9aa6');
+  text(s.toFixed(3),PX0,PY1+64,26,anom?'#ff5a4a':'#7CFC9A');
+  if(anom) text('⚠ ANOMALY — scene change',PX1,PY1+60,18,'#ff5a4a','right');
+  else     text('nominal',PX1,PY1+60,18,'#7CFC9A','right');
+}
+window.renderFrame=renderFrame;window.__ready=true;
+</script>
+</body></html>
