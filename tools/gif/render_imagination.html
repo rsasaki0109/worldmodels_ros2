@@ -1,90 +1,90 @@
 <!doctype html>
 <html lang="en"><head><meta charset="utf-8">
-<style>
-  html,body{margin:0;background:#1b1b20;}
-  #c{display:block;}
-</style></head>
+<style>html,body{margin:0;background:#1b1b20}#c{display:block}</style></head>
 <body>
 <canvas id="c" width="760" height="420"></canvas>
 <script>
-const cv = document.getElementById('c');
-const ctx = cv.getContext('2d');
-const GP = 340, OX = 36, OY = 56;       // grid pixels + origin
+const ctx=document.getElementById('c').getContext('2d');
+const OX=36, OY=82, GP=300;               // scene square (top-down)
+function ramp(f){f=Math.max(0,Math.min(1,f));return [Math.round(255*f),Math.round(200*(1-f))+30,60];}
+function rgb(c,a){return `rgba(${c[0]},${c[1]},${c[2]},${a===undefined?1:a})`;}
+function text(s,x,y,sz,col,al){ctx.fillStyle=col;ctx.font=`${sz}px system-ui,sans-serif`;ctx.textAlign=al||'left';ctx.fillText(s,x,y);}
 
-function ramp(frac){            // green (near) -> red (far)
-  frac = Math.max(0, Math.min(1, frac));
-  return [Math.round(255*frac), Math.round(200*(1-frac))+30, 60];
+// grid (col,row) -> scene pixel
+function S(gx,gy,gs){return [OX+gx/gs*GP, OY+gy/gs*GP];}
+
+// per future step: occupancy-weighted centroid + radius (in cells)
+function blobs(D){
+  const gs=D.grid_size, thr=15, out=[];
+  for(const g of D.layers){
+    let sw=0,sx=0,sy=0,n=0;
+    for(let r=0;r<gs;r++)for(let q=0;q<gs;q++){const v=g[r][q];if(v<thr)continue;sw+=v;sx+=q*v;sy+=r*v;n++;}
+    out.push(sw===0?null:{gx:sx/sw, gy:sy/sw, rad:Math.sqrt(n/Math.PI)});
+  }
+  return out;
 }
-function text(s, x, y, size, color, align){
-  ctx.fillStyle = color; ctx.font = `${size}px system-ui, sans-serif`;
-  ctx.textAlign = align||'left'; ctx.fillText(s, x, y);
+
+function robot(gs){
+  const [x,y]=S(gs*0.5, gs*0.96, gs);
+  ctx.fillStyle='#dfe2ea';
+  ctx.beginPath();ctx.moveTo(x,y-11);ctx.lineTo(x-9,y+8);ctx.lineTo(x+9,y+8);ctx.closePath();ctx.fill();
+  text('robot',x,y+24,12,'#9a9aa6','center');
 }
 
 function renderFrame(i){
-  const D = window.DATA;
-  const N = D.frames.length, gs = D.grid_size, cell = GP/gs;
-  const fr = D.frames[i];
-  const cur = Math.min(D.horizon-1, Math.floor(fr.step));
+  const D=window.DATA, gs=D.grid_size, N=D.frames.length, H=D.horizon;
+  if(!window.BLOBS) window.BLOBS=blobs(D);
+  const B=window.BLOBS, scale=GP/gs;
+  const s=(i/N)*(H-1), cur=Math.floor(s), t=s-cur;
 
-  // background
-  ctx.fillStyle = '#1b1b20'; ctx.fillRect(0,0,cv.width,cv.height);
-  // title
-  text('world_model_ros2 — imagined future occupancy', OX, 30, 20, '#f0f0f3');
-  text('dummy World Model · GPU-free', OX, 404, 13, '#7d7d88');
+  ctx.fillStyle='#1b1b20';ctx.fillRect(0,0,760,420);
+  text('A World Model imagines the future',28,32,21,'#f0f0f3');
+  text('top-down: where will an obstacle be over the next 8 steps?  green = soon, red = later',28,54,13,'#9aa0ad');
+  text('dummy World Model · GPU-free · FutureOccupancy + RiskScore from one ROS 2 call',28,408,12,'#6a6a74');
 
-  // grid frame
-  ctx.strokeStyle = '#33333c'; ctx.lineWidth = 1;
-  ctx.strokeRect(OX-0.5, OY-0.5, GP+1, GP+1);
+  // floor grid
+  ctx.strokeStyle='#2a2a31';ctx.lineWidth=1;
+  for(let k=0;k<=6;k++){const gx=k/6*gs;let a=S(gx,0,gs),b=S(gx,gs,gs);ctx.beginPath();ctx.moveTo(a[0],a[1]);ctx.lineTo(b[0],b[1]);ctx.stroke();
+    let c=S(0,gx,gs),d=S(gs,gx,gs);ctx.beginPath();ctx.moveTo(c[0],c[1]);ctx.lineTo(d[0],d[1]);ctx.stroke();}
+  ctx.strokeStyle='#3a3a44';ctx.strokeRect(OX-0.5,OY-0.5,GP+1,GP+1);
 
-  // faint streak: every horizon layer (green->far red)
-  for(let k=0;k<D.horizon;k++){
-    const c = ramp(k/(D.horizon-1));
-    const g = D.layers[k];
-    for(let r=0;r<gs;r++) for(let q=0;q<gs;q++){
-      const occ = g[r][q]; if(occ<=12) continue;
-      ctx.fillStyle = `rgba(${c[0]},${c[1]},${c[2]},${0.05+0.10*(occ/100)})`;
-      ctx.fillRect(OX+q*cell, OY+r*cell, cell+0.5, cell+0.5);
-    }
+  // predicted path through future centroids (dashed)
+  const pts=B.map(b=>b?S(b.gx,b.gy,gs):null).filter(Boolean);
+  ctx.setLineDash([4,5]);ctx.strokeStyle='rgba(180,180,190,0.35)';ctx.lineWidth=2;
+  ctx.beginPath();pts.forEach((p,k)=>k?ctx.lineTo(p[0],p[1]):ctx.moveTo(p[0],p[1]));ctx.stroke();ctx.setLineDash([]);
+
+  // faint future footprints (green -> red)
+  for(let k=0;k<H;k++){const b=B[k];if(!b)continue;const c=ramp(k/(H-1)),p=S(b.gx,b.gy,gs);
+    ctx.fillStyle=rgb(c,0.18);ctx.beginPath();ctx.arc(p[0],p[1],b.rad*scale,0,7);ctx.fill();}
+
+  // the obstacle "now" (bright, interpolated along the prediction)
+  const ba=B[cur], bb=B[Math.min(H-1,cur+1)]||B[cur];
+  if(ba&&bb){
+    const gx=ba.gx+(bb.gx-ba.gx)*t, gy=ba.gy+(bb.gy-ba.gy)*t, rad=(ba.rad+(bb.rad-ba.rad)*t)*scale;
+    const c=ramp(s/(H-1)), p=S(gx,gy,gs);
+    ctx.fillStyle=rgb(c,0.9);ctx.shadowColor=rgb(c,1);ctx.shadowBlur=18;
+    ctx.beginPath();ctx.arc(p[0],p[1],rad,0,7);ctx.fill();ctx.shadowBlur=0;
+    text('obstacle',p[0],p[1]-rad-8,13,'#fff','center');
+    text(`predicted t+${cur+1}`,p[0],p[1]+rad+18,12,rgb(c,1),'center');
   }
-  // bright current step
-  const cc = ramp(cur/(D.horizon-1));
-  const gc = D.layers[cur];
-  for(let r=0;r<gs;r++) for(let q=0;q<gs;q++){
-    const occ = gc[r][q]; if(occ<=12) continue;
-    ctx.fillStyle = `rgba(${cc[0]},${cc[1]},${cc[2]},${0.45+0.5*(occ/100)})`;
-    ctx.fillRect(OX+q*cell, OY+r*cell, cell+0.5, cell+0.5);
-  }
-  text(`imagining  t+${cur+1} / ${D.horizon}`, OX+4, OY+22, 16, '#ffffff');
+  robot(gs);
 
-  // ---- right panel ----
-  const RX = OX+GP+34;
-  text('horizon', RX, OY+8, 13, '#9a9aa6');
-  // near->far legend bar
-  for(let s=0;s<60;s++){ const c=ramp(s/59); ctx.fillStyle=`rgb(${c[0]},${c[1]},${c[2]})`; ctx.fillRect(RX+s*4.6, OY+16, 5, 14); }
-  text('near', RX, OY+46, 12, '#7d7d88');
-  text('far', RX+270, OY+46, 12, '#7d7d88', 'right');
+  // right panel: legend + risk + plain-language note
+  const RX=372;
+  text('prediction horizon',RX,OY+6,13,'#9a9aa6');
+  for(let k=0;k<48;k++){const c=ramp(k/47);ctx.fillStyle=rgb(c);ctx.fillRect(RX+k*4.7,OY+14,5,13);}
+  text('now',RX,OY+44,12,'#7d7d88');text('+0.8 s',RX+225,OY+44,12,'#7d7d88','right');
 
-  // playhead ticks
-  for(let k=0;k<D.horizon;k++){
-    const x = RX + k*(276/(D.horizon-1));
-    ctx.fillStyle = (k===cur)?'#ffffff':'#4a4a55';
-    ctx.fillRect(x-2, OY+58, (k===cur)?5:2, 12);
-  }
+  const fr=D.frames[i], rc=ramp(fr.risk), ry=OY+96, rw=225;
+  text('risk of the planned action',RX,ry-10,13,'#9a9aa6');
+  ctx.fillStyle='#2a2a33';ctx.fillRect(RX,ry,rw,26);
+  ctx.fillStyle=rgb(rc,1);ctx.fillRect(RX,ry,rw*fr.risk,26);
+  ctx.strokeStyle='#44444f';ctx.strokeRect(RX-0.5,ry-0.5,rw+1,27);
+  text(fr.risk.toFixed(2),RX+rw,ry+48,22,rgb(rc,1),'right');
 
-  // risk bar
-  const ry = OY+120, rw = 276;
-  text('risk (action-conditioned)', RX, ry-10, 13, '#9a9aa6');
-  ctx.fillStyle = '#2a2a33'; ctx.fillRect(RX, ry, rw, 26);
-  const rc = ramp(fr.risk);
-  ctx.fillStyle = `rgb(${rc[0]},${rc[1]},${rc[2]})`; ctx.fillRect(RX, ry, rw*fr.risk, 26);
-  ctx.strokeStyle = '#44444f'; ctx.strokeRect(RX-0.5, ry-0.5, rw+1, 27);
-  text(fr.risk.toFixed(2), RX+rw, ry+44, 22, `rgb(${rc[0]},${rc[1]},${rc[2]})`, 'right');
-
-  // caption
-  text('FutureOccupancy + RiskScore', RX, OY+250, 13, '#7d7d88');
-  text('from one ROS 2 call', RX, OY+270, 13, '#7d7d88');
+  text('The robot asks: "if I act, where will',RX,OY+172,13,'#8b8b96');
+  text('obstacles be — and how risky is it?"',RX,OY+190,13,'#8b8b96');
 }
-window.renderFrame = renderFrame;
-window.__ready = true;
+window.renderFrame=renderFrame;window.__ready=true;
 </script>
 </body></html>
