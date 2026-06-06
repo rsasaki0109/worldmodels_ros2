@@ -12,11 +12,12 @@ using *existing* World Models in robotics and autonomous driving.**
 > score trajectories, visualize imagination in RViz, and export rosbag2 data to
 > robot-learning datasets.
 
-![real video through V-JEPA 2, surprise spikes on scene changes](docs/hero.gif)
+![real robot footage through V-JEPA 2, surprise spikes when the view changes](docs/hero.gif)
 
-<sub>Real footage → the real **V-JEPA 2** video model on a GPU → **surprise**:
-the latent stays calm while the camera pans and spikes the instant the scene
-cuts. Actual model output on real photographs.</sub>
+<sub>Real **LeRobot SO-101** robot-camera footage → the real **V-JEPA 2** video
+model on a GPU → **surprise**: the latent stays calm while the robot moves and
+spikes the instant the camera view changes. Actual model output on real robot
+video.</sub>
 
 ## Highlights
 

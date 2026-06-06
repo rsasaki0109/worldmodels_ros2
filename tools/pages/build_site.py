@@ -17,7 +17,7 @@ import sys
 REPO_URL = "https://github.com/rsasaki0109/worldmodels_ros2"
 
 CAPTIONS = {
-    "hero.gif": "Real footage → V-JEPA 2 → surprise; the latent spikes when the scene cuts.",
+    "hero.gif": "Real LeRobot SO-101 robot footage → V-JEPA 2 → surprise; spikes when the view changes.",
     "imagination.gif": "Top-down: predicted future occupancy of an obstacle (green→red) + risk.",
     "jepa_compare.gif": "Same camera stream, two real World Models: I-JEPA vs V-JEPA 2 surprise.",
     "nav2_scoring.gif": "Nav2 candidate paths ranked by model-based risk; safest highlighted.",
