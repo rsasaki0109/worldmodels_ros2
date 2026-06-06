@@ -16,6 +16,11 @@ report.html
 *.html
 !world_model_*/**/*.html
 
+# node (gif tooling)
+node_modules/
+package-lock.json
+tools/gif/package.json
+
 # editors / OS
 .vscode/
 .idea/
