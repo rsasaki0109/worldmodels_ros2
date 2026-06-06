@@ -26,8 +26,8 @@ from .registry import load_model
 
 
 class WorldModelMonitor(Node):
-    def __init__(self):
-        super().__init__("world_model_monitor")
+    def __init__(self, **kwargs):
+        super().__init__("world_model_monitor", **kwargs)
         self.declare_parameter("adapter", "ijepa")
         self.declare_parameter("model_id", "facebook/ijepa_vith14_1k")
         self.declare_parameter("image_topic", "image")

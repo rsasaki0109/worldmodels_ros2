@@ -200,6 +200,8 @@ the server (they cannot drift). Everything light runs with no GPU; only the
 | topic (pub) | `/world_model_runtime/future_occupancy` | `world_model_msgs/FutureOccupancy` |
 | topic (pub) | `/world_model_runtime/risk_score` | `world_model_msgs/RiskScore` |
 | topic (pub) | `/world_model_viz/imagination` | `visualization_msgs/MarkerArray` |
+| topic (pub) | `/world_model_monitor/surprise`, `…/anomaly_threshold` | `std_msgs/Float32` |
+| topic (pub) | `/world_model_monitor/anomaly` | `std_msgs/Bool` |
 | service | `/world_model_trajectory_scorer/score_trajectories` | `world_model_msgs/srv/ScoreTrajectories` |
 | topic (pub) | `/world_model_trajectory_scorer/scored_paths` | `visualization_msgs/MarkerArray` |
 | HTTP | `POST /predict_future`, `GET /health` | `world-model-server` (JSON) |
