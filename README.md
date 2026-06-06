@@ -197,6 +197,11 @@ and `register("vjepa2", VJepa2Adapter)`.
 
 ### Real model: JEPA latent server (`ijepa`)
 
+![I-JEPA surprise spiking on scene changes](docs/ijepa_surprise.gif)
+
+<sub>Real I-JEPA ViT-H/14 on a GPU: surprise stays low under smooth motion and
+spikes (~0.35) on scene changes — actual model output, not a mock.</sub>
+
 The first real backend turns a camera stream into latents and a **surprise**
 score (cosine distance between successive latents — a model-based novelty /
 anomaly signal). It loads a self-supervised JEPA image encoder (I-JEPA today;
