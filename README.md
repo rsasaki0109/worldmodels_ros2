@@ -11,6 +11,11 @@ using *existing* World Models in robotics and autonomous driving.**
 > score trajectories, visualize imagination in RViz, and export rosbag2 data to
 > robot-learning datasets.
 
+![imagined future occupancy + risk](docs/imagination.gif)
+
+<sub>Imagined `FutureOccupancy` (green = near, red = far) and action-conditioned
+`RiskScore` from one ROS 2 call — here the GPU-free `dummy` adapter.</sub>
+
 `world_model_ros2` is **not** another foundation model. It is the
 [Nav2](https://github.com/ros-navigation/navigation2)/`transformers`-style
 **boundary** that lets a ROS 2 developer call a World Model the same way every
