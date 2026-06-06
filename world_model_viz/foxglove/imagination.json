@@ -1,0 +1,56 @@
+{
+  "configById": {
+    "3D!imagination": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 9.5,
+        "phi": 52,
+        "thetaOffset": 45,
+        "targetOffset": [1.6, 1.6, 0],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.01,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "followTf": "map",
+      "scene": { "backgroundColor": "#1e1e23", "transforms": { "showLabel": false } },
+      "transforms": {},
+      "topics": {
+        "/world_model_viz/imagination": { "visible": true }
+      },
+      "layers": {},
+      "publish": {}
+    },
+    "Plot!risk": {
+      "paths": [
+        {
+          "value": "/world_model_runtime/risk_score.score",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "risk"
+        }
+      ],
+      "minYValue": 0,
+      "maxYValue": 1,
+      "showXAxisLabels": true,
+      "showYAxisLabels": true,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "showPlotValuesInLegend": true,
+      "isSynced": true,
+      "xAxisVal": "timestamp",
+      "sidebarDimension": 240
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "first": "3D!imagination",
+    "second": "Plot!risk",
+    "direction": "row",
+    "splitPercentage": 68
+  }
+}

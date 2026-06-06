@@ -88,6 +88,25 @@ ros2 launch world_model_viz imagination_demo.launch.py     # rviz:=false on head
 
 The viewer republishes `MarkerArray` on `/world_model_viz/imagination`.
 
+### 4. See the imagination (Foxglove)
+
+No ROS needed to *look*: a recorded clip ships in the repo. Open
+[Foxglove](https://foxglove.dev/) → "Open local file" →
+[`world_model_viz/demo/imagination.mcap`](world_model_viz/demo/imagination.mcap),
+then import the layout
+[`world_model_viz/foxglove/imagination.json`](world_model_viz/foxglove/imagination.json)
+(menu → Layouts → Import). You get the 3D imagined-occupancy view plus a live
+risk plot. To capture your own, record any run:
+
+```bash
+ros2 bag record -s mcap -o my_run \
+    /world_model_viz/imagination /world_model_runtime/risk_score
+```
+
+(If the layout doesn't import cleanly on your Foxglove version, just add a **3D**
+panel and enable the `/world_model_viz/imagination` topic — markers carry their
+own colors.)
+
 ## Packages
 
 | package | type | what |
