@@ -15,7 +15,7 @@ rclpy = pytest.importorskip("rclpy")
 from rclpy.executors import SingleThreadedExecutor
 from std_msgs.msg import Header
 
-from world_model_msgs.srv import PlanToGoal
+from world_model_msgs.srv import ImagineFutures, PlanToGoal
 
 from world_model_py.adapters import Observation
 from world_model_py.conversions import np_to_image_msg
@@ -63,6 +63,35 @@ def test_plan_to_goal_service():
         assert resp.planned_action.action_dim == 3
         assert len(resp.planned_action.action) == 8 * 3
         assert np.isfinite(resp.final_cost)
+        node.destroy_node(); client.destroy_node()
+    finally:
+        rclpy.try_shutdown()
+
+
+def test_imagine_futures_service():
+    rclpy.init()
+    try:
+        dyn, imgs = _synthetic_memory(action_dim=1)      # steering-only memory
+        node = PlanningNode()
+        node.attach_memory(dyn)
+        client = rclpy.create_node("imagine_test_client")
+        cli = client.create_client(ImagineFutures, "/world_model_planning/imagine_futures")
+        ex = SingleThreadedExecutor(); ex.add_node(node); ex.add_node(client)
+        assert cli.wait_for_service(timeout_sec=5.0)
+
+        req = ImagineFutures.Request()
+        req.current_image = np_to_image_msg(imgs[0], Header())
+        req.steering_options = [-0.7, 0.0, 0.7]
+        req.horizon = 10
+        fut = cli.call_async(req)
+        ex.spin_until_future_complete(fut, timeout_sec=15.0)
+        resp = fut.result()
+
+        assert resp is not None and resp.success
+        assert len(resp.branches) == 3                   # one future per option
+        assert all(len(b.latents) == 10 for b in resp.branches)
+        assert len(resp.divergence) == 3
+        assert resp.divergence[0] == 0.0                 # branch 0 vs itself
         node.destroy_node(); client.destroy_node()
     finally:
         rclpy.try_shutdown()

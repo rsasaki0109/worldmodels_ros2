@@ -367,10 +367,15 @@ ros2 run world_model_py planning_node --ros-args \
 ros2 service call /world_model_planning/plan_to_goal \
     world_model_msgs/srv/PlanToGoal "{...}"
 #   -> planned_action (ActionCondition) · final_cost · start_cost · success
+
+# counterfactual: imagine one future per steering option (the hero demo, as a service)
+ros2 service call /world_model_planning/imagine_futures \
+    world_model_msgs/srv/ImagineFutures "{steering_options: [-0.7, 0.0, 0.7], horizon: 12}"
+#   -> branches[] (imagined FutureState per option) · divergence[] · success
 ```
 
 The node (`world_model_py/planning_node.py`) is a thin ROS wrapper; the planner
-stays ROS-free. Service wiring is covered by an in-process test.
+stays ROS-free. Both services are covered by in-process tests.
 
 Honest scope: retrieval decodes imagined latents to *real remembered frames* (no
 pixel synthesis), so this shows **action-conditioned imagination from experience**,

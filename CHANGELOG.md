@@ -4,13 +4,23 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## [Unreleased]
+## [0.4.0] - 2026-06-08
+
+The imagination layer reaches ROS 2: plan to an image goal and run counterfactual
+"what-if" rollouts as services, on top of the learning-free planner from 0.3.0.
 
 ### Added
 - **`PlanToGoal` ROS 2 service + `planning_node`** — plan to an image goal in a
   World Model's latent space via the learning-free retrieval planner; returns a
   planned `ActionCondition`, final/start goal cost. New
-  `world_model_msgs/srv/PlanToGoal.srv`; in-process service test (2).
+  `world_model_msgs/srv/PlanToGoal.srv`.
+- **`ImagineFutures` ROS 2 service** — counterfactual rollout: one imagined
+  `FutureState` (latents, and decoded frames if the memory has them) per steering
+  option, plus per-branch divergence. The README hero demo, as a service. New
+  `world_model_msgs/srv/ImagineFutures.srv`.
+- **`planning.rollout_action` / `imagine_counterfactuals`** — reusable
+  counterfactual primitives shared by the demo and the node.
+- In-process service tests (3) for both services.
 
 ### Changed
 - Promoted the counterfactual imagination GIF to the README hero; moved the

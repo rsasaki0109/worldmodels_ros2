@@ -22,12 +22,24 @@ import numpy as np
 import rclpy
 from rclpy.node import Node
 
-from world_model_msgs.srv import PlanToGoal
-from world_model_msgs.msg import ActionCondition as ActionConditionMsg
+from std_msgs.msg import Header
+
+from world_model_msgs.srv import ImagineFutures, PlanToGoal
+from world_model_msgs.msg import (
+    ActionCondition as ActionConditionMsg,
+    FutureState as FutureStateMsg,
+    LatentState as LatentStateMsg,
+)
 
 from world_model_py.adapters import Observation
-from world_model_py.conversions import image_msg_to_np
-from world_model_py.planning import RetrievalDynamics, cosine_distance, plan_to_goal
+from world_model_py.conversions import image_msg_to_np, np_to_image_msg
+from world_model_py.planning import (
+    RetrievalDynamics,
+    cosine_distance,
+    decode_trajectory,
+    imagine_counterfactuals,
+    plan_to_goal,
+)
 from world_model_py.registry import load_model
 
 
@@ -49,8 +61,11 @@ class PlanningNode(Node):
 
         name = self.get_parameter("adapter").value
         self._adapter = load_model(name, **adapter_kwargs)
+        self._frames = None                       # optional decoded-frame memory
         self._dyn = self._load_memory(self.get_parameter("memory_path").value)
         self._srv = self.create_service(PlanToGoal, "~/plan_to_goal", self._on_plan)
+        self._imagine_srv = self.create_service(
+            ImagineFutures, "~/imagine_futures", self._on_imagine)
         self.get_logger().info(
             f"planning node up (adapter={name}, "
             f"memory={'loaded' if self._dyn is not None else 'NONE — set memory_path'})")
@@ -59,14 +74,17 @@ class PlanningNode(Node):
         if not path:
             return None
         d = np.load(path)
+        if "frames" in getattr(d, "files", []):
+            self._frames = d["frames"]            # (N, H, W, 3), aligned to next_latents
         return RetrievalDynamics(
             d["latents"], d["actions"], d["next_latents"],
             k=int(self.get_parameter("k").value),
             action_weight=float(self.get_parameter("action_weight").value))
 
-    def attach_memory(self, dynamics: RetrievalDynamics) -> None:
+    def attach_memory(self, dynamics: RetrievalDynamics, frames=None) -> None:
         """Inject a dynamics directly (used by tests / in-process callers)."""
         self._dyn = dynamics
+        self._frames = frames
 
     def _encode(self, img_msg) -> np.ndarray:
         arr = image_msg_to_np(img_msg)
@@ -102,6 +120,41 @@ class PlanningNode(Node):
         self.get_logger().info(
             f"planned: start_cost {resp.start_cost:.3f} -> final_cost {resp.final_cost:.3f} "
             f"({resp.start_cost / (resp.final_cost + 1e-9):.1f}x closer)")
+        return resp
+
+    def _on_imagine(self, req, resp):
+        if self._dyn is None:
+            self.get_logger().warn("no experience memory; set memory_path")
+            resp.success = False
+            return resp
+        start = self._encode(req.current_image)
+        horizon = int(req.horizon) or int(self.get_parameter("horizon").value)
+        adim = int(self._dyn.actions.shape[1])
+        opts = [np.full(adim, float(s), np.float32) for s in req.steering_options]
+        branches = imagine_counterfactuals(self._dyn, start, opts, horizon)
+
+        header = req.current_image.header
+        endpoints = []
+        for latents, _idx in branches:
+            fs = FutureStateMsg()
+            fs.header = header
+            fs.dt = 0.0
+            for lat in latents:
+                ls = LatentStateMsg()
+                ls.data = [float(x) for x in np.asarray(lat, np.float32).ravel()]
+                ls.shape = [len(ls.data)]
+                ls.encoding = self._adapter.name
+                fs.latents.append(ls)
+            if self._frames is not None:
+                for fr in decode_trajectory(latents, self._dyn.next_latents, self._frames):
+                    fs.frames.append(np_to_image_msg(np.asarray(fr, np.uint8), header))
+            resp.branches.append(fs)
+            endpoints.append(np.asarray(latents[-1], np.float32))
+        resp.divergence = [cosine_distance(e, endpoints[0]) for e in endpoints]
+        resp.success = True
+        self.get_logger().info(
+            f"imagined {len(endpoints)} branches, "
+            f"max divergence {max(resp.divergence):.3f}")
         return resp
 
 

@@ -147,6 +147,52 @@ def _rollout(dynamics: LatentDynamics, start: np.ndarray, seq: np.ndarray):
     return latents, indices
 
 
+def rollout_action(
+    dynamics: LatentDynamics,
+    start_latent: np.ndarray,
+    action: np.ndarray,
+    horizon: int,
+    forward_bias: bool = False,
+) -> tuple:
+    """Imagine a latent trajectory under a single *fixed* action.
+
+    This is the counterfactual primitive: "what happens if I keep taking this
+    action?". Returns (latents, indices) where indices is the nearest memory
+    entry per step (-1 if the dynamics has no index). ``forward_bias`` makes a
+    single-episode rollout march forward instead of collapsing onto a fixed
+    point; leave it off for a multi-episode experience memory.
+    """
+    a = np.asarray(action, dtype=np.float32).ravel()
+    cur = np.asarray(start_latent, dtype=np.float32).ravel()
+    cursor, latents, indices = -1, [], []
+    for _ in range(int(max(1, horizon))):
+        if hasattr(dynamics, "step_with_index"):
+            cur, i = dynamics.step_with_index(cur, a, cursor if forward_bias else -1)
+            if forward_bias:
+                cursor = i
+        else:
+            cur, i = dynamics.step(cur, a), -1
+        latents.append(np.asarray(cur, dtype=np.float32)); indices.append(int(i))
+    return latents, indices
+
+
+def imagine_counterfactuals(
+    dynamics: LatentDynamics,
+    start_latent: np.ndarray,
+    action_options,
+    horizon: int = 12,
+    forward_bias: bool = False,
+) -> list:
+    """Imagine one future per candidate action — "what if I did A vs B vs C?".
+
+    ``action_options`` is a list of fixed actions (each shape (action_dim,)).
+    Returns a list of (latents, indices), one per option. The branches diverge
+    by action when the experience memory contains those actions' consequences.
+    """
+    return [rollout_action(dynamics, start_latent, a, horizon, forward_bias)
+            for a in action_options]
+
+
 def plan_to_goal(
     dynamics: LatentDynamics,
     start_latent: np.ndarray,

@@ -1,0 +1,14 @@
+# Imagine a different future for each candidate action — a counterfactual rollout.
+#
+# "What if I steer left vs straight vs right?" Each option is rolled forward
+# through the World Model's learned (retrieval) dynamics from the current
+# observation, so the branches diverge by action — visual what-if for a planner
+# or a safety gate, with no dynamics training.
+
+sensor_msgs/Image current_image
+float32[] steering_options    # one imagined branch per value (e.g. [-0.7, 0.0, 0.7])
+uint32 horizon               # steps to imagine (0 -> node default)
+---
+FutureState[] branches       # imagined future per option (latents; frames if available)
+float32[] divergence         # endpoint cosine distance of each branch vs branch[0]
+bool success
