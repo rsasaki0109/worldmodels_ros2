@@ -23,9 +23,19 @@ from PIL import Image, ImageDraw
 from world_model_py.play import load_world
 
 WORLD = os.path.join("docs", "drive_world.npz")
+DECODER = os.path.join("docs", "drive_decoder.pt")
 OUT_GIF = os.path.join("docs", "drive.gif")
 TILE = 256
 KEYMAP = {"L": -0.7, "S": 0.0, "R": 0.7}
+
+
+def _make_sim(generative):
+    """Load the world; attach the learned decoder when --generative is set."""
+    dpath = DECODER if generative and os.path.exists(DECODER) else None
+    if generative and dpath is None:
+        print("no decoder found; run validate_generative_decode.py first "
+              "(falling back to retrieval)", file=sys.stderr)
+    return load_world(WORLD, decoder_path=dpath)
 
 
 def _hud(frame, steering, t):
@@ -46,8 +56,8 @@ def _hud(frame, steering, t):
     return np.asarray(im)
 
 
-def record(seq):
-    sim = load_world(WORLD)
+def record(seq, generative=False):
+    sim = _make_sim(generative)
     tmp = tempfile.mkdtemp()
     frame = sim.reset()
     panes = [_hud(frame, 0.0, 0)]
@@ -65,10 +75,10 @@ def record(seq):
     print(f"wrote {OUT_GIF} ({len(panes)} frames, steering {''.join(seq)})")
 
 
-def interactive():
+def interactive(generative=False):
     import matplotlib.pyplot as plt
 
-    sim = load_world(WORLD)
+    sim = _make_sim(generative)
     state = {"steer": 0.0}
     fig, ax = plt.subplots(figsize=(5, 5))
     img = ax.imshow(_hud(sim.reset(), 0.0, 0))
@@ -91,12 +101,14 @@ def main():
     if not os.path.exists(WORLD):
         print(f"missing {WORLD}; run build_drive_world.py first", file=sys.stderr)
         return 1
-    if len(sys.argv) > 1 and sys.argv[1] == "--record":
-        seq = sys.argv[2].split(",") if len(sys.argv) > 2 else list(
-            "SSLLLLSSRRRRRSSLLLSS")
-        record([k.strip().upper() for k in seq])
+    args = sys.argv[1:]
+    generative = "--generative" in args
+    args = [a for a in args if a != "--generative"]
+    if args and args[0] == "--record":
+        seq = args[1].split(",") if len(args) > 1 else list("SSLLLLSSRRRRRSSLLLSS")
+        record([k.strip().upper() for k in seq], generative=generative)
     else:
-        interactive()
+        interactive(generative=generative)
     return 0
 
 

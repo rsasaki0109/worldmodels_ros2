@@ -4,6 +4,33 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.6.0] - 2026-06-08
+
+Generate the future instead of retrieving it: a learned `latent → pixel` decoder
+turns imagined latents into synthesised frames, including states that were never
+observed.
+
+### Added
+- **`LatentDecoder`** (`world_model_py.decoder`) — a small convolutional decoder
+  trained on `(latent, frame)` pairs so an imagined latent is *rendered* as pixels
+  instead of snapped to the nearest real frame. Plugs into `DriveSim`
+  (`frame()` generates when a decoder is attached) and any imagined trajectory.
+  Optional / lazy-imported torch, like the JEPA adapters; retrieval decode stays
+  the torch-free default.
+- **`test/validate_generative_decode.py`** — trains the decoder on a built world,
+  reports reconstruction PSNR (~31 dB on public L2D), and renders
+  `docs/generated_drive.gif` (retrieved vs generated, side by side) and
+  `docs/decoder.png` (reconstructions + a latent interpolation that generates
+  unobserved frames).
+- **`play_drive.py --generative`** — drive with generated frames.
+- 4 torch-gated unit tests for the decoder (shapes, learning, save/load).
+
+### Notes
+- Honest scope: reconstruction-grade rendering bounded by the small public
+  dataset (~750 frames) — softer than real, latent interpolations blur. A step
+  toward but not yet DIAMOND/Oasis-quality generation; the same interface takes a
+  stronger decoder or a V-JEPA 2-AC head with more data.
+
 ## [0.5.0] - 2026-06-08
 
 A *learned* world-model head: train a tiny action-conditioned latent dynamics on

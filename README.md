@@ -37,6 +37,9 @@ diverge by action. Learning-free episodic planning — see
 - **Drive *inside* the world model** — a learned action-conditioned latent
   dynamics head (PCA + tiny MLP) you can *steer through* in real time; trained on
   a GPU but **inference is pure numpy**, so playing back needs no torch.
+- **Generative decoder** — an optional learned `latent → pixel` decoder
+  *synthesises* the imagined frame (incl. states never observed) instead of
+  retrieving the nearest real one (PSNR ≈ 31 dB on public L2D).
 - **RViz + Foxglove** imagination viewer (a playable MCAP clip is bundled).
 - **Live benchmark dashboard**, republished on every push →
   <https://rsasaki0109.github.io/worldmodels_ros2/>.
@@ -431,12 +434,49 @@ python3 world_model_py/test/play_drive.py --record "S,S,L,L,L,S,R,R,R,S"
 `LinearDynamics` (closed-form) and the numpy inference path are unit-tested on
 GPU-free CI; the torch trainer is exercised end-to-end on a toy rotation world.
 
-Honest scope: like the counterfactual demo, imagined latents are decoded to *real
-remembered frames* (nearest neighbour — JEPA has no pixel decoder), so this is
-action-conditioned imagination over a learned latent dynamics, **not** pixel
-synthesis à la [DIAMOND](https://arxiv.org/abs/2405.12399) /
-[Oasis](https://oasis-model.github.io/). The natural next step is to swap in a
-generative decoder / a V-JEPA 2-AC head behind the same interface.
+Honest scope: by default, imagined latents are decoded to *real remembered
+frames* (nearest neighbour — JEPA has no pixel decoder), so this is
+action-conditioned imagination over a learned latent dynamics. To actually
+*generate* the frames instead of retrieving them, attach the learned decoder
+([below](#generative-decoder-generate-the-future-dont-retrieve-it)).
+
+## Generative decoder (generate the future, don't retrieve it)
+
+![retrieved vs generated: the same imagined drive, decoded by nearest-neighbour retrieval and by a learned latent->pixel decoder](docs/generated_drive.gif)
+
+<sub>**Left: retrieved. Right: generated.** Nearest-neighbour decode can only ever
+show frames that *happened*; a small learned **latent → pixel** decoder (conv net,
+trained on the experience frames) *synthesises* the frame for an imagined latent —
+including latents that fall *between* remembered states. Same learned-dynamics
+ride, rendered both ways.</sub>
+
+![real vs decoded reconstructions, and a latent interpolation generating frames that were never observed](docs/decoder.png)
+
+<sub>Top: real vs decoded (reconstruction **PSNR ≈ 31 dB** on the public L2D
+frames). Bottom: a straight-line interpolation in latent space — the decoder
+generates plausible in-between frames that are in **no** memory.</sub>
+
+`world_model_py.decoder.LatentDecoder` trains on `(latent, frame)` pairs and
+plugs into `DriveSim` (or any imagined trajectory) so `frame()` *generates*
+instead of retrieves. Unlike the numpy dynamics head, the decoder is a conv net,
+so it needs torch — it is an **optional** component (lazy-imported, like the JEPA
+adapters); retrieval decode stays the torch-free default.
+
+```bash
+# train the decoder on a built world and render the comparison above:
+WM_DEVICE=cuda python3 world_model_py/test/validate_generative_decode.py
+#   -> docs/drive_decoder.pt (the decoder), docs/decoder.png, docs/generated_drive.gif
+
+# then drive with generated frames instead of retrieved ones:
+python3 world_model_py/test/play_drive.py --generative
+```
+
+Honest scope: reconstruction quality is bounded by the small public dataset
+(~750 frames), so generated frames are softer than the real ones and latent
+interpolations blur — this is reconstruction-grade neural rendering, a step
+toward but not yet [DIAMOND](https://arxiv.org/abs/2405.12399) /
+[Oasis](https://oasis-model.github.io/)-quality generation. The same interface
+takes a stronger decoder or a V-JEPA 2-AC head when you have more data.
 
 ## Runtime anomaly / OOD monitor
 

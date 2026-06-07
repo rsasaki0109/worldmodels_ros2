@@ -50,6 +50,7 @@ class DriveSim:
     start_latent: np.ndarray
     start_index: int = 0
     forward_bias: bool = False
+    decoder: object = None          # optional LatentDecoder: generate, don't retrieve
 
     latent: np.ndarray = field(init=False, default=None)
     cursor: int = field(init=False, default=-1)
@@ -73,7 +74,10 @@ class DriveSim:
         return self.frame()
 
     def frame(self):
-        """Decode the current latent to the nearest real frame."""
+        """Render the current latent: *generate* it with the decoder if one is
+        attached, otherwise retrieve the nearest real frame."""
+        if self.decoder is not None:
+            return self.decoder.decode(self.latent)
         q = self.latent / (np.linalg.norm(self.latent) + 1e-8)
         return self.memory_frames[int(np.argmax(self._mem_n @ q))]
 
@@ -103,7 +107,8 @@ class DriveSim:
         return frames
 
 
-def load_world(npz_path: str, dynamics: str = "auto") -> DriveSim:
+def load_world(npz_path: str, dynamics: str = "auto",
+               decoder_path: str = None) -> DriveSim:
     """Build a :class:`DriveSim` from a ``.npz`` produced by build_drive_world.py.
 
     Expected arrays: ``latents`` (N,D), ``actions`` (N,1) steering,
@@ -130,7 +135,11 @@ def load_world(npz_path: str, dynamics: str = "auto") -> DriveSim:
         aw = float(z["action_weight"]) if "action_weight" in z else 0.4
         dyn = RetrievalDynamics(lat, act, nxt, k=k, action_weight=aw)
         forward_bias = True                # retrieval needs the forward march
+    decoder = None
+    if decoder_path is not None:
+        from .decoder import LatentDecoder
+        decoder = LatentDecoder.load(decoder_path)
     # Decode against the *arrival* latents (next_latents) so a decoded latent
     # shows where you end up, matching the counterfactual demo.
     return DriveSim(dyn, nxt, frames, start_latent=nxt[start],
-                    start_index=start, forward_bias=forward_bias)
+                    start_index=start, forward_bias=forward_bias, decoder=decoder)
