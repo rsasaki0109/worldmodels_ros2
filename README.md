@@ -12,13 +12,15 @@ using *existing* World Models in robotics and autonomous driving.**
 > score trajectories, visualize imagination in RViz, and export rosbag2 data to
 > robot-learning datasets.
 
-![runtime anomaly monitor flagging an unexpected event on real robot footage](docs/hero.gif)
+![counterfactual driving imagination: what if I steer left / straight / right, on real public data](docs/counterfactual.gif)
 
-<sub>**A practical use:** a runtime anomaly monitor. Real **LeRobot SO-101**
-robot-camera footage → real **V-JEPA 2** latent surprise → a self-calibrating
-threshold (`mean + k·σ`) that flags an unexpected event — here the camera is
-briefly occluded. Calibrates on nominal operation, **no failure data needed**
-(following recent World-Model failure/OOD-monitoring research).</sub>
+<sub>**Imagine the consequences of an action.** From a single current frame, the
+World Model imagines a *different future for each action* — *"what if I steer
+left / straight / right?"* — on real public **L2D** driving video, with **zero
+dynamics training**. A frozen JEPA encoder + an action-conditioned **retrieval
+dynamics** rolled out per counterfactual steering; the branches genuinely
+diverge by action. Learning-free episodic planning — see
+[below](#counterfactual-imagination--planning-learning-free).</sub>
 
 ## Highlights
 
@@ -362,6 +364,13 @@ not pixel-accurate generation. Grounded in latent-planning world-model research:
 [Navigation World Models](https://arxiv.org/abs/2412.03572).
 
 ## Runtime anomaly / OOD monitor
+
+![runtime anomaly monitor flagging an unexpected event on real robot footage](docs/hero.gif)
+
+<sub>Real **LeRobot SO-101** robot-camera footage → real **V-JEPA 2** latent
+surprise → a self-calibrating threshold (`mean + k·σ`) that flags an unexpected
+event — here the camera is briefly occluded. Calibrates on nominal operation,
+**no failure data needed**.</sub>
 
 A practical use of a World Model on a live robot: turn its **latent prediction
 error** (the `ijepa`/`vjepa2` surprise) into a **runtime safety monitor**. It
