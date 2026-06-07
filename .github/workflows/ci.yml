@@ -24,7 +24,8 @@ jobs:
           python -m pytest
           test/test_adapters.py test/test_jepa.py test/test_bench.py
           test/test_metrics.py test/test_anomaly.py test/test_registry.py
-          test/test_wire.py test/test_remote_server.py test/test_planning.py -q
+          test/test_wire.py test/test_remote_server.py test/test_planning.py
+          test/test_play.py test/test_dynamics.py -q
 
   # Full ROS 2 Jazzy build + colcon test inside the official container.
   colcon:

@@ -4,6 +4,35 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.5.0] - 2026-06-08
+
+A *learned* world-model head: train a tiny action-conditioned latent dynamics on
+real driving and **drive inside it** — smoothly, with steering control — where
+the learning-free retrieval model could only do one-shot what-ifs.
+
+### Added
+- **`MLPDynamics`** (`world_model_py.dynamics`) — a learned action-conditioned
+  latent dynamics head: PCA to a small subspace + a tiny MLP predicting the
+  latent delta. Trained with torch (GPU), but **inference is pure numpy** (weights
+  stored as numpy), so a trained world is a self-contained `.npz` and the planner
+  / DriveSim / ROS node need no torch. Drop-in for the existing `step()` interface.
+- **`LinearDynamics`** (`world_model_py.planning`) — a closed-form ridge-regression
+  latent dynamics head; the honest baseline (predicts well, keeps moving, but
+  can't capture steering). Pure numpy, unit-tested on CI.
+- **`DriveSim`** (`world_model_py.play`) + **playable demo** — steer through the
+  world model in real time (`test/play_drive.py`, keyboard or `--record` to GIF);
+  `test/build_drive_world.py` builds a playable world from real public **L2D**
+  driving video (encode → train head → one self-contained `.npz`). New README
+  hero-style GIF `docs/drive.gif`.
+- Unit tests (12) for the numpy inference path, `LinearDynamics`, and `DriveSim`;
+  the torch trainer is exercised on a toy rotation world (skipped without torch).
+
+### Notes
+- Honest result, measured on the same memory: only the learned MLP head *both*
+  keeps moving under a constant action *and* responds to steering (L–R 0.43).
+  Retrieval collapses to a fixed point under a held action; a linear head moves
+  but ignores steering. Still nearest-neighbour decode (no pixel synthesis).
+
 ## [0.4.0] - 2026-06-08
 
 The imagination layer reaches ROS 2: plan to an image goal and run counterfactual

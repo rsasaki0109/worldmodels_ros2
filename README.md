@@ -34,6 +34,9 @@ diverge by action. Learning-free episodic planning — see
 - **Counterfactual imagination & planning (learning-free)** — imagine *"what if I
   steer left / straight / right"* and plan to an image goal from an episodic
   retrieval world model, **no dynamics training**; validated on real public data.
+- **Drive *inside* the world model** — a learned action-conditioned latent
+  dynamics head (PCA + tiny MLP) you can *steer through* in real time; trained on
+  a GPU but **inference is pure numpy**, so playing back needs no torch.
 - **RViz + Foxglove** imagination viewer (a playable MCAP clip is bundled).
 - **Live benchmark dashboard**, republished on every push →
   <https://rsasaki0109.github.io/worldmodels_ros2/>.
@@ -384,6 +387,56 @@ not pixel-accurate generation. Grounded in latent-planning world-model research:
 [V-JEPA 2-AC](https://arxiv.org/abs/2506.09985),
 [PLDM](https://arxiv.org/abs/2502.14819),
 [Navigation World Models](https://arxiv.org/abs/2412.03572).
+
+## Drive inside the world model (learned dynamics)
+
+![driving inside the world model: steer left / straight / right through a learned latent dynamics on real public data](docs/drive.gif)
+
+<sub>**Steer through the model.** The retrieval dynamics above is perfect for a
+one-shot *what-if* but it is not a smooth simulator — a constant action collapses
+onto a remembered fixed point, so you can't keep *driving*. A small **learned**
+action-conditioned latent dynamics head (PCA → tiny MLP, trained on the same real
+**L2D** transitions) fixes that: a constant action keeps moving, and steering
+genuinely bends the imagined route. Trained on a GPU, but the saved world is
+**pure numpy** — playing it back (and the planner, and the ROS node) needs no
+torch.</sub>
+
+`world_model_py.dynamics.MLPDynamics` is a drop-in for the same `step()` interface
+the planner and counterfactual demo already use — the rest of the stack is
+unchanged (the planner was always dynamics-agnostic). Why a *learned* head earns
+its keep over learning-free retrieval, measured on the same memory:
+
+| dynamics | one-step latent error (cos, ↓) | constant action | steering response (L–R, ↑) | playable? |
+|---|---|---|---|---|
+| `RetrievalDynamics` (learning-free) | 0.010 | collapses to a fixed point | 0.68 (via episode jumps) | no — not smooth |
+| `LinearDynamics` (ridge, numpy) | **0.008** | keeps moving | 0.02 (ignores steering) | no — no control |
+| **`MLPDynamics`** (PCA + MLP) | 0.010 | keeps moving | **0.43** | **yes** |
+
+So the learned MLP head is the only one that *both* keeps moving under a held
+action *and* responds to steering — i.e. the only one you can actually drive. A
+constant-action retrieval rollout can't move (no real forward dynamics), and a
+linear head moves but can't see steering (its effect on the latent is nonlinear).
+
+```bash
+# build a playable world from real public driving video (downloads L2D, encodes
+# with I-JEPA, trains the head on a GPU, writes a self-contained docs/drive_world.npz):
+WM_DEVICE=cuda python3 world_model_py/test/build_drive_world.py
+
+# drive it with the keyboard (left/right steer, up = straight, q = quit) ...
+python3 world_model_py/test/play_drive.py
+# ... or record a scripted session to docs/drive.gif (no display needed):
+python3 world_model_py/test/play_drive.py --record "S,S,L,L,L,S,R,R,R,S"
+```
+
+`LinearDynamics` (closed-form) and the numpy inference path are unit-tested on
+GPU-free CI; the torch trainer is exercised end-to-end on a toy rotation world.
+
+Honest scope: like the counterfactual demo, imagined latents are decoded to *real
+remembered frames* (nearest neighbour — JEPA has no pixel decoder), so this is
+action-conditioned imagination over a learned latent dynamics, **not** pixel
+synthesis à la [DIAMOND](https://arxiv.org/abs/2405.12399) /
+[Oasis](https://oasis-model.github.io/). The natural next step is to swap in a
+generative decoder / a V-JEPA 2-AC head behind the same interface.
 
 ## Runtime anomaly / OOD monitor
 

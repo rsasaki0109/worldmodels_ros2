@@ -118,6 +118,63 @@ class RetrievalDynamics:
 
 
 @dataclass
+class LinearDynamics:
+    """A *learned* (not retrieved) action-conditioned latent dynamics.
+
+    Fits ``next_latent ~= latent + W @ [latent; action; 1]`` by ridge regression
+    on a memory of real transitions -- a closed-form, pure-numpy, torch-free
+    "world model head". Unlike :class:`RetrievalDynamics`, it predicts a *smooth*
+    delta for **any** (latent, action), so:
+
+      * a constant action keeps producing forward motion instead of collapsing
+        onto a remembered fixed point (what makes a rollout *playable*), and
+      * changing the action changes the predicted delta (steering control).
+
+    It is a drop-in for the planner / DriveSim (same ``step`` / ``step_with_index``
+    interface). Decode-to-frame still uses the experience frames via
+    :func:`decode_trajectory`; this head has no frame index, so
+    ``step_with_index`` returns ``-1``. For nonlinear dynamics, swap in a torch
+    MLP head with the same interface -- the rest of the stack is unchanged.
+    """
+
+    weight: np.ndarray            # (D, D + A + 1): [latent; action; 1] -> delta
+    action_dim: int
+
+    @classmethod
+    def fit(
+        cls,
+        latents: np.ndarray,
+        actions: np.ndarray,
+        next_latents: np.ndarray,
+        ridge: float = 1.0,
+    ) -> "LinearDynamics":
+        lat = np.asarray(latents, dtype=np.float64)
+        act = np.asarray(actions, dtype=np.float64)
+        nxt = np.asarray(next_latents, dtype=np.float64)
+        if act.ndim == 1:
+            act = act[:, None]
+        n, d = lat.shape
+        if not (act.shape[0] == nxt.shape[0] == n) or n == 0:
+            raise ValueError("latents/actions/next_latents must share N>0 rows")
+        x = np.concatenate([lat, act, np.ones((n, 1))], axis=1)   # (N, D+A+1)
+        y = nxt - lat                                             # (N, D) delta
+        m = x.shape[1]
+        gram = x.T @ x + ridge * np.eye(m)                        # ridge-regularised
+        w = np.linalg.solve(gram, x.T @ y)                       # (D+A+1, D)
+        return cls(weight=w.T.astype(np.float32), action_dim=int(act.shape[1]))
+
+    def step_with_index(self, latent, action, after: int = -1) -> tuple:
+        latent = np.asarray(latent, dtype=np.float32).ravel()
+        action = np.asarray(action, dtype=np.float32).ravel()
+        x = np.concatenate([latent, action, np.ones(1, dtype=np.float32)])
+        delta = self.weight @ x
+        return (latent + delta).astype(np.float32), -1
+
+    def step(self, latent, action, after: int = -1) -> np.ndarray:
+        return self.step_with_index(latent, action, after)[0]
+
+
+@dataclass
 class PlanResult:
     """The outcome of planning toward a goal latent."""
 
