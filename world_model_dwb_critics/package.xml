@@ -1,11 +1,11 @@
 <?xml version="1.0"?>
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
-  <name>world_model_costmap</name>
+  <name>world_model_dwb_critics</name>
   <version>0.7.1</version>
   <description>
-    Nav2 costmap_2d layer plugin that stamps a World Model's predicted
-    FutureOccupancy into the costmap (future dynamic-obstacle layer).
+    DWB TrajectoryCritic plugin that scores trajectories against a World Model's
+    predicted FutureOccupancy (same lethal-union rule as world_model_costmap).
   </description>
   <maintainer email="rsasaki0109@gmail.com">Ryohei Sasaki</maintainer>
   <license>Apache-2.0</license>
@@ -13,14 +13,16 @@
   <buildtool_depend>ament_cmake</buildtool_depend>
 
   <depend>rclcpp</depend>
-  <depend>rclcpp_lifecycle</depend>
+  <depend>dwb_core</depend>
+  <depend>dwb_msgs</depend>
+  <depend>geometry_msgs</depend>
   <depend>nav2_costmap_2d</depend>
+  <depend>nav2_util</depend>
   <depend>pluginlib</depend>
-  <depend>nav_msgs</depend>
   <depend>world_model_msgs</depend>
 
   <export>
     <build_type>ament_cmake</build_type>
-    <nav2_costmap_2d plugin="${prefix}/world_model_costmap_plugins.xml" />
+    <dwb_core plugin="${prefix}/world_model_dwb_critics_plugins.xml" />
   </export>
 </package>

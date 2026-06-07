@@ -18,6 +18,8 @@ transitions to roll through. Build one from any rosbag / dataset (the
 """
 from __future__ import annotations
 
+import os
+
 import numpy as np
 import rclpy
 from rclpy.node import Node
@@ -47,8 +49,8 @@ class PlanningNode(Node):
     """ROS 2 service node that plans to an image goal in a World Model's latent
     space using a learning-free retrieval dynamics."""
 
-    def __init__(self, **adapter_kwargs):
-        super().__init__("world_model_planning")
+    def __init__(self, *, parameter_overrides=None, **adapter_kwargs):
+        super().__init__("world_model_planning", parameter_overrides=parameter_overrides or [])
         self.declare_parameter("adapter", "dummy")
         self.declare_parameter("memory_path", "")
         self.declare_parameter("horizon", 12)
@@ -62,6 +64,7 @@ class PlanningNode(Node):
         name = self.get_parameter("adapter").value
         self._adapter = load_model(name, **adapter_kwargs)
         self._frames = None                       # optional decoded-frame memory
+        self._memory_mtime = 0.0
         self._dyn = self._load_memory(self.get_parameter("memory_path").value)
         self._srv = self.create_service(PlanToGoal, "~/plan_to_goal", self._on_plan)
         self._imagine_srv = self.create_service(
@@ -71,15 +74,28 @@ class PlanningNode(Node):
             f"memory={'loaded' if self._dyn is not None else 'NONE — set memory_path'})")
 
     def _load_memory(self, path: str):
-        if not path:
+        if not path or not os.path.isfile(path):
             return None
         d = np.load(path)
         if "frames" in getattr(d, "files", []):
             self._frames = d["frames"]            # (N, H, W, 3), aligned to next_latents
+        else:
+            self._frames = None
+        self._memory_mtime = os.path.getmtime(path)
         return RetrievalDynamics(
             d["latents"], d["actions"], d["next_latents"],
             k=int(self.get_parameter("k").value),
             action_weight=float(self.get_parameter("action_weight").value))
+
+    def _maybe_reload_memory(self) -> None:
+        path = self.get_parameter("memory_path").value
+        if not path or not os.path.isfile(path):
+            return
+        mtime = os.path.getmtime(path)
+        if mtime <= self._memory_mtime and self._dyn is not None:
+            return
+        self.get_logger().info(f"loading experience memory from {path}")
+        self._dyn = self._load_memory(path)
 
     def attach_memory(self, dynamics: RetrievalDynamics, frames=None) -> None:
         """Inject a dynamics directly (used by tests / in-process callers)."""
@@ -92,6 +108,7 @@ class PlanningNode(Node):
         return np.asarray(lat, np.float32).ravel()
 
     def _on_plan(self, req, resp):
+        self._maybe_reload_memory()
         if self._dyn is None:
             self.get_logger().warn("no experience memory; set memory_path")
             resp.success = False
@@ -123,6 +140,7 @@ class PlanningNode(Node):
         return resp
 
     def _on_imagine(self, req, resp):
+        self._maybe_reload_memory()
         if self._dyn is None:
             self.get_logger().warn("no experience memory; set memory_path")
             resp.success = False

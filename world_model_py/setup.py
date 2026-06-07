@@ -4,7 +4,7 @@ package_name = "world_model_py"
 
 setup(
     name=package_name,
-    version="0.6.0",
+    version="0.7.1",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -25,6 +25,8 @@ setup(
             "planning_node = world_model_py.planning_node:main",
             "sample_publisher = world_model_py.sample_publisher:main",
             "camera_sim = world_model_py.camera_sim:main",
+            "bag_relay = world_model_py.bag_relay:main",
+            "experience_recorder = world_model_py.experience_recorder:main",
             # standalone CLI + reference remote server (also usable without ROS)
             "world-model = world_model_py.cli:main",
             "world-model-server = world_model_py.server:main",

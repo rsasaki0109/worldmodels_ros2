@@ -30,7 +30,10 @@ diverge by action. Learning-free episodic planning — see
   over a shared JSON wire; ROS 2 clients are unchanged.
 - **Compiled Nav2 costmap layer** — predicted occupancy flows straight into the
   Nav2 costmap (real `nav2_costmap_2d::Layer`, not a mock).
-- **rosbag2 → LeRobot** dataset export, **GPU-free**.
+- **Compiled Nav2 DWB critic** — score DWB rollouts against the same predicted
+  occupancy (`world_model_dwb_critics`).
+- **rosbag2 → LeRobot** dataset export, **GPU-free** (optional `lerobot` loader
+  validation test included).
 - **Counterfactual imagination & planning (learning-free)** — imagine *"what if I
   steer left / straight / right"* and plan to an image goal from an episodic
   retrieval world model, **no dynamics training**; validated on real public data.
@@ -152,16 +155,80 @@ ros2 bag record -s mcap -o my_run \
 panel and enable the `/world_model_viz/imagination` topic — markers carry their
 own colors.)
 
+### 5. Replay your own rosbag2
+
+Feed a recorded drive through the World Model — no robot, no synthetic publisher.
+The `bag_relay` node joins camera + `cmd_vel` + `odom` into
+`world_model_msgs/Observation`; the launch file starts bag play, the runtime,
+the imagination viewer and RViz.
+
+```bash
+ros2 launch world_model_bringup replay_imagination.launch.py \
+    bag:=/path/to/my_drive \
+    adapter:=dummy          # or ijepa / vjepa2 on a GPU box
+
+# topic names differ in your bag? override them:
+#   image_topic:=/front_camera/image_raw action_topic:=/control/cmd state_topic:=/localization/odom
+# headless:
+#   rviz:=false
+```
+
+Record your own bag first:
+
+```bash
+ros2 bag record -s mcap -o my_drive /camera/image_raw /cmd_vel /odom
+```
+
+**Record an experience memory while replaying** (for learning-free counterfactual
+planning). The `experience_recorder` encodes each frame, pairs consecutive
+latents with steering (`cmd_vel.angular.z`), and writes `experience.npz` when
+the bag finishes. `planning_node` reloads the file automatically.
+
+```bash
+ros2 launch world_model_bringup replay_imagination.launch.py \
+    bag:=/path/to/my_drive \
+    record_experience:=true \
+    experience_out:=/tmp/experience.npz
+
+# after bag play ends (~3s idle), imagine L / straight / R:
+ros2 service call /world_model_planning/imagine_futures \
+    world_model_msgs/srv/ImagineFutures \
+    "{steering_options: [-0.7, 0.0, 0.7], horizon: 12}"
+```
+
+Use `adapter:=ijepa` on a GPU box for real latent encoding; `dummy` works
+GPU-free for pipeline smoke tests.
+
+### 6. Counterfactual replay demo (bundled bag, one command)
+
+A synthetic driving bag ships in the repo. This replays it, records
+`experience.npz`, auto-calls `ImagineFutures`, and shows the L / straight / R
+mosaic in RViz — no robot, no dataset download, GPU-free with `dummy`.
+
+```bash
+ros2 launch world_model_bringup replay_counterfactual_demo.launch.py
+# faster replay: rate:=3.0   headless: rviz:=false
+```
+
+Topics: `/counterfactual_viz/counterfactual/mosaic` (Image) and
+`…/markers` (MarkerArray). Rebuild the bundled bag with
+`python3 world_model_bringup/scripts/build_demo_bag.py`.
+
+Open the counterfactual clip in [Foxglove](https://foxglove.dev/) with layout
+[`world_model_viz/foxglove/counterfactual.json`](world_model_viz/foxglove/counterfactual.json)
+(record `/counterfactual_viz/counterfactual/mosaic` during a replay).
+
 ## Packages
 
 | package | type | what |
 |---|---|---|
 | `world_model_msgs` | ament_cmake | the message/action **contract**: `Observation`, `ActionCondition`, `FutureState`, `FutureOccupancy`, `LatentState`, `RiskScore`, `Rollout`, `PredictFuture.action` |
-| `world_model_py` | ament_python | adapter SDK (`load_model`), `dummy` / `ijepa` / `remote` adapters, lifecycle runtime node, reference `world-model-server`, benchmark, `world-model` CLI |
-| `world_model_viz` | ament_python | imagination viewer: imagined `FutureOccupancy` + `RiskScore` → RViz `MarkerArray` |
+| `world_model_py` | ament_python | adapter SDK (`load_model`), `dummy` / `ijepa` / `remote` adapters, lifecycle runtime node, `bag_relay` (rosbag2 → Observation), reference `world-model-server`, benchmark, `world-model` CLI |
+| `world_model_viz` | ament_python | imagination viewer (`FutureOccupancy` + `RiskScore` → RViz); counterfactual mosaic viewer (`ImagineFutures` → Image + MarkerArray) |
 | `world_model_datasets` | ament_python | `export_lerobot`: rosbag2 → LeRobot-compatible dataset (parquet + mp4 + meta), GPU-free |
 | `world_model_nav2` | ament_python | score Nav2 candidate trajectories by model-based risk (`ScoreTrajectories` service + risk-coloured path markers) |
 | `world_model_costmap` | ament_cmake (C++) | **compiled** `nav2_costmap_2d::Layer` that stamps predicted `FutureOccupancy` into the costmap |
+| `world_model_dwb_critics` | ament_cmake (C++) | **compiled** `dwb_core::TrajectoryCritic` that scores DWB rollouts against predicted occupancy |
 | `world_model_bringup` | ament_cmake | launch files + demo config |
 
 ## Architecture
@@ -295,9 +362,18 @@ Output (v2.1 layout): `meta/{info,episodes,tasks,stats}.json[l]`,
 Supported state/action types: `nav_msgs/Odometry`, `sensor_msgs/JointState`,
 `geometry_msgs/Twist[Stamped]`, `std_msgs/Float{32,64}MultiArray`.
 
-> Honesty: validated structurally (parquet round-trips, mp4 is ffprobe-readable,
-> counts consistent), **not** against the `lerobot` loader (not a dependency
-> here). Verify against your `lerobot` version before training.
+**Loader validation (optional).** With `pip install lerobot`, convert v2.1 → v3.0
+and open the dataset:
+
+```bash
+pip install lerobot
+cd world_model_datasets
+python3 -m pytest test/validate_lerobot_loader.py -q
+```
+
+The test exports a toy dataset, runs `lerobot.scripts.convert_dataset_v21_to_v30`,
+and loads it with `LeRobotDataset`. Structural checks (parquet round-trip, ffprobe-
+readable mp4, counts) run in CI without `lerobot`.
 
 **Validated on real public data.** `test/validate_real_lerobot.py` builds a
 rosbag2 from a public **LeRobot SO-101** episode (real camera video + real 6-DoF
@@ -522,6 +598,34 @@ unit-tested. This follows recent World-Model failure/OOD-monitoring work, e.g.
 [failure detection without failure data](https://arxiv.org/html/2503.08558v1),
 and [foundation world models detecting manipulation failures](https://arxiv.org/pdf/2603.06987).
 
+## Nav2 avoidance preview (predicted occupancy → detour)
+
+![World Model predicted occupancy steers around the lethal union](docs/nav2_avoidance.gif)
+
+<sub>**Predicted occupancy → avoid.** The dummy World Model imagines a moving
+obstacle blob; `costmap_preview_node` shows the lethal union that
+`world_model_costmap::WorldModelLayer` would stamp into Nav2, and
+`avoidance_demo_node` picks a detour path that misses it (naive straight in red,
+safe arc in green). GPU-free, no Gazebo.</sub>
+
+```bash
+ros2 launch world_model_bringup nav2_avoidance_demo.launch.py
+```
+
+Honest scope: this previews the **costmap layer** logic in RViz; for a **live Nav2
+stack** (loopback sim, not Gazebo) with both plugins loaded:
+
+```bash
+sudo apt install ros-jazzy-nav2-loopback-sim   # once
+ros2 launch world_model_bringup nav2_loopback_world_model.launch.py use_rviz:=false
+# optional headless smoke:
+python3 $(ros2 pkg prefix world_model_bringup)/share/world_model_bringup/scripts/smoke_nav2_loopback.py
+```
+
+For trajectory *ranking* by model risk, see the scorer mock below. For a **compiled
+DWB critic**, see
+[world_model_dwb_critics/README.md](world_model_dwb_critics/README.md).
+
 ## Nav2 trajectory scoring (mock)
 
 ![Nav2 trajectory scoring by World Model risk](docs/nav2_scoring.gif)
@@ -551,16 +655,20 @@ For the **production path**, `world_model_costmap` is a *compiled*
 `nav2_costmap_2d::Layer` that stamps the model's predicted `FutureOccupancy`
 straight into the Nav2 costmap — so any planner/controller avoids predicted
 obstacles. See [world_model_costmap/README.md](world_model_costmap/README.md).
+`world_model_dwb_critics` adds the same rule as a `dwb_core::TrajectoryCritic`
+for DWB local planners.
 
 ## Roadmap (90-day MVP)
 
 - **0–30d (this scaffold):** msgs, adapter SDK, dummy + remote adapters,
   lifecycle node, CLI, HTML smoke/bench report — **all GPU-free**. ✅
 - **31–60d:** JEPA latent adapter (image→latent→surprise) ✅, RViz imagination
-  markers ✅, rosbag2 replay demo (next).
-- **61–90d:** rosbag2 → LeRobotDataset converter ✅, Nav2 trajectory-scoring
-  mock ✅, compiled Nav2 costmap layer ✅, remote adapter + reference server
-  (Cosmos/DreamZero-ready) ✅, benchmark dashboard, VLA Zoo / Walking Zoo examples.
+  markers ✅, rosbag2 replay demo ✅, counterfactual replay demo ✅, Nav2
+  avoidance preview ✅.
+- **61–90d:** rosbag2 → LeRobotDataset converter ✅ (optional `lerobot` loader
+  validation ✅), Nav2 trajectory-scoring mock ✅, compiled Nav2 costmap layer ✅,
+  compiled DWB critic ✅, remote adapter + reference server (Cosmos/DreamZero-ready)
+  ✅, benchmark dashboard. VLA Zoo / Walking Zoo — out of scope for now.
 
 ## Contributing
 

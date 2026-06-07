@@ -43,6 +43,6 @@ local_costmap:
 ## Verification status
 
 Compiles against Nav2 Jazzy, exports the pluginlib class, and registers in the
-ament index (so Nav2 discovers it). **Closed-loop behavior in a running Nav2
-stack is not yet validated here** — try it in a Gazebo/Nav2 sim before relying
-on it.
+ament index. **Nav2 loopback smoke** (`smoke_nav2_loopback.py`) confirms the
+layer subscribes to `future_occupancy` inside a live stack. Full Gazebo +
+navigation-to-goal is not yet validated here.

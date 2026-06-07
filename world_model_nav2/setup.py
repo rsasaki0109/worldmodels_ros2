@@ -7,7 +7,7 @@ package_name = "world_model_nav2"
 
 setup(
     name=package_name,
-    version="0.6.0",
+    version="0.7.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -25,6 +25,7 @@ setup(
         "console_scripts": [
             "trajectory_scorer_node = world_model_nav2.trajectory_scorer_node:main",
             "score_demo = world_model_nav2.score_demo:main",
+            "avoidance_demo_node = world_model_nav2.avoidance_demo_node:main",
         ],
     },
 )

@@ -2,7 +2,7 @@
 <?xml-model href="http://download.ros.org/schema/package_format3.xsd" schematypens="http://www.w3.org/2001/XMLSchema"?>
 <package format="3">
   <name>world_model_bringup</name>
-  <version>0.6.0</version>
+  <version>0.7.1</version>
   <description>Launch files and demo configuration for world_model_ros2.</description>
   <maintainer email="rsasaki0109@gmail.com">Ryohei Sasaki</maintainer>
   <license>Apache-2.0</license>
@@ -14,6 +14,14 @@
   <exec_depend>launch</exec_depend>
   <exec_depend>launch_ros</exec_depend>
   <exec_depend>lifecycle_msgs</exec_depend>
+  <exec_depend>world_model_viz</exec_depend>
+  <exec_depend>world_model_nav2</exec_depend>
+  <exec_depend>world_model_costmap</exec_depend>
+  <exec_depend>world_model_dwb_critics</exec_depend>
+  <exec_depend>nav2_bringup</exec_depend>
+  <exec_depend>nav2_loopback_sim</exec_depend>
+  <exec_depend>rosbag2</exec_depend>
+  <exec_depend>rviz2</exec_depend>
 
   <export>
     <build_type>ament_cmake</build_type>

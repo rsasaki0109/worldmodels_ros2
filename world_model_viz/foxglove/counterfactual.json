@@ -1,0 +1,63 @@
+{
+  "configById": {
+    "Image!mosaic": {
+      "cameraTopic": "/counterfactual_viz/counterfactual/mosaic",
+      "enabledMarkerTopics": [],
+      "mode": "fit",
+      "pan": { "x": 0, "y": 0 },
+      "rotation": 0,
+      "synchronize": false,
+      "transformMarkers": false,
+      "zoom": 1
+    },
+    "3D!panels": {
+      "cameraState": {
+        "perspective": true,
+        "distance": 5.5,
+        "phi": 55,
+        "thetaOffset": 40,
+        "targetOffset": [0, 0, 0.5],
+        "target": [0, 0, 0],
+        "targetOrientation": [0, 0, 0, 1],
+        "fovy": 45,
+        "near": 0.01,
+        "far": 5000
+      },
+      "followMode": "follow-pose",
+      "scene": { "backgroundColor": "#1e1e23" },
+      "topics": {
+        "/counterfactual_viz/counterfactual/markers": { "visible": true }
+      },
+      "layers": {},
+      "publish": {}
+    },
+    "Plot!divergence": {
+      "paths": [
+        {
+          "value": "/counterfactual_viz/counterfactual/divergence.data[:]",
+          "enabled": true,
+          "timestampMethod": "receiveTime",
+          "label": "branch divergence"
+        }
+      ],
+      "minYValue": 0,
+      "showLegend": true,
+      "legendDisplay": "floating",
+      "xAxisVal": "index"
+    }
+  },
+  "globalVariables": {},
+  "userNodes": {},
+  "playbackConfig": { "speed": 1 },
+  "layout": {
+    "direction": "column",
+    "first": "Image!mosaic",
+    "second": {
+      "direction": "row",
+      "first": "3D!panels",
+      "second": "Plot!divergence",
+      "splitPercentage": 72
+    },
+    "splitPercentage": 42
+  }
+}

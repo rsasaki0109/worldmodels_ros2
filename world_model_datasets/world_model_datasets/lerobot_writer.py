@@ -4,11 +4,10 @@ Pure Python: pyarrow for parquet, ffmpeg for video, json for metadata. No ROS,
 no torch, no lerobot package -- so it is unit-testable on its own.
 
 Honesty note: this produces the v2.1 *layout* (meta/info.json, meta/tasks.jsonl,
-meta/episodes.jsonl, meta/stats.json, data/chunk-*/episode_*.parquet,
-videos/chunk-*/<key>/episode_*.mp4). It is validated structurally (parquet
-round-trips, mp4 is ffprobe-readable, counts are consistent) -- not against the
-lerobot loader, which is not installed here. Treat it as "LeRobot-compatible",
-verify against your lerobot version before training.
+meta/episodes.jsonl, meta/episodes_stats.jsonl, meta/stats.json,
+data/chunk-*/episode_*.parquet, videos/chunk-*/<key>/episode_*.mp4). Validated
+structurally and, when ``lerobot`` is installed, via ``test/validate_lerobot_loader.py``
+(v2.1 -> v3.0 convert + ``LeRobotDataset`` load).
 """
 from __future__ import annotations
 
@@ -124,7 +123,8 @@ class LeRobotWriter:
         self._img_shapes: Dict[str, tuple] = {}
         self._stats = {"observation.state": _RunningStats(), "action": _RunningStats()}
 
-        # per-episode scratch
+        # per-episode stats for meta/episodes_stats.jsonl (LeRobot v2.1 / v3 convert)
+        self._episode_stats: list[dict] = []
         self._ep_open = False
         self._rows = None
         self._encoders: Dict[str, _VideoEncoder] = {}
@@ -141,6 +141,7 @@ class LeRobotWriter:
         self._rows = {k: [] for k in
                       ("index", "episode_index", "frame_index", "timestamp",
                        "task_index", "observation.state", "action", "next.done")}
+        self._ep_stats = {"observation.state": _RunningStats(), "action": _RunningStats()}
         self._encoders = {
             key: _VideoEncoder(
                 os.path.join(self.out, "videos", CHUNK, key, f"episode_{ep_idx:06d}.mp4"),
@@ -178,11 +179,25 @@ class LeRobotWriter:
 
         self._stats["observation.state"].update(state)
         self._stats["action"].update(action)
+        self._ep_stats["observation.state"].update(state)
+        self._ep_stats["action"].update(action)
 
         for key, enc in self._encoders.items():
             img = images[key]
             self._img_shapes.setdefault(key, img.shape[:2] + (3,))
             enc.add(img)
+
+    def _vector_column(self, key: str, dim: int | None) -> pa.Array:
+        """Parquet column compatible with lerobot v3 ``LeRobotDataset`` loading."""
+        vals = self._rows[key]
+        if not vals:
+            return pa.array([], type=pa.list_(pa.float32()))
+        if dim is None:
+            dim = len(vals[0])
+        if dim == 1:
+            # info.json shape [1] -> HF Value (scalar), not Sequence.
+            return pa.array([v[0] for v in vals], type=pa.float32())
+        return pa.array(vals, type=pa.list_(pa.float32(), dim))
 
     def end_episode(self) -> None:
         assert self._ep_open, "no episode open"
@@ -193,8 +208,8 @@ class LeRobotWriter:
 
         table = pa.table(
             {
-                "observation.state": pa.array(self._rows["observation.state"], pa.list_(pa.float32())),
-                "action": pa.array(self._rows["action"], pa.list_(pa.float32())),
+                "observation.state": self._vector_column("observation.state", self._state_dim),
+                "action": self._vector_column("action", self._action_dim),
                 "timestamp": pa.array(self._rows["timestamp"], pa.float32()),
                 "frame_index": pa.array(self._rows["frame_index"], pa.int64()),
                 "episode_index": pa.array(self._rows["episode_index"], pa.int64()),
@@ -212,6 +227,9 @@ class LeRobotWriter:
 
         self._episodes.append(
             {"episode_index": ep_idx, "tasks": [self._ep_task], "length": length}
+        )
+        self._episode_stats.append(
+            {"episode_index": ep_idx, "stats": {k: s.as_dict() for k, s in self._ep_stats.items() if s.n}}
         )
         self._ep_open = False
         self._rows = None
@@ -275,6 +293,10 @@ class LeRobotWriter:
         with open(os.path.join(meta, "episodes.jsonl"), "w") as fh:
             for e in self._episodes:
                 fh.write(json.dumps(e) + "\n")
+
+        with open(os.path.join(meta, "episodes_stats.jsonl"), "w") as fh:
+            for row in self._episode_stats:
+                fh.write(json.dumps(row) + "\n")
 
         stats = {k: s.as_dict() for k, s in self._stats.items() if s.n}
         with open(os.path.join(meta, "stats.json"), "w") as fh:

@@ -4,6 +4,49 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.7.1] - 2026-06-08
+
+LeRobot loader validation and a compiled Nav2 DWB critic plugin.
+
+### Added
+- **LeRobot loader validation** — `test/validate_lerobot_loader.py` exports a toy
+  dataset, converts v2.1 → v3.0, and loads it with `LeRobotDataset` when
+  `lerobot` is installed. Parquet writer fix: 1-D state/action columns are stored
+  as scalars so v3 loading succeeds.
+- **`world_model_dwb_critics`** — compiled `dwb_core::TrajectoryCritic` plugin
+  (`WorldModelOccupancyCritic`) that scores DWB rollouts against predicted
+  `FutureOccupancy` using the same lethal-union rule as `world_model_costmap`.
+- **Nav2 loopback integration** — `nav2_loopback_world_model.launch.py` patches
+  Nav2 bringup params with the costmap layer + DWB critic; `smoke_nav2_loopback.py`
+  verifies both plugins initialise in a live stack (requires
+  `ros-jazzy-nav2-loopback-sim`).
+
+### Notes
+- Loopback smoke confirms plugin load + subscription, not full navigation to a goal.
+  LeRobot validation is optional (`pip install lerobot`).
+
+## [0.7.0] - 2026-06-08
+
+From rosbag replay to counterfactual imagination and Nav2-style avoidance — the
+full “use your own data” loop, plus one-command demos.
+
+### Added
+- **Rosbag replay** — `bag_relay` node + `replay_imagination.launch.py`: play a
+  bag through the World Model runtime and RViz imagination viewer.
+- **Experience recording** — `experience_recorder` writes `experience.npz` when a
+  replay finishes; `planning_node` hot-reloads the memory for `ImagineFutures`.
+- **Counterfactual demo** — bundled `drive_demo.mcap`,
+  `replay_counterfactual_demo.launch.py`, `counterfactual_marker_node` (mosaic +
+  MarkerArray), and Foxglove layout `foxglove/counterfactual.json`.
+- **Nav2 avoidance preview** — `costmap_preview_node` (predicted lethal union),
+  `avoidance_demo_node` (pick a detour path using the same rule as
+  `world_model_costmap::WorldModelLayer`), `nav2_avoidance_demo.launch.py`, and
+  `docs/nav2_avoidance.gif`.
+
+### Notes
+- Nav2 avoidance demo visualises the costmap-layer logic in Python + RViz; closed-
+  loop Nav2 in Gazebo is still future work (see `world_model_costmap/README.md`).
+
 ## [0.6.0] - 2026-06-08
 
 Generate the future instead of retrieving it: a learned `latent → pixel` decoder

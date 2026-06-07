@@ -1,0 +1,8 @@
+<library path="world_model_occupancy_critic">
+  <class type="world_model_dwb_critics::WorldModelOccupancyCritic" base_class_type="dwb_core::TrajectoryCritic">
+    <description>
+      Scores DWB trajectories by how much they intersect a World Model's predicted
+      FutureOccupancy (lethal union over the horizon). Lower is better.
+    </description>
+  </class>
+</library>

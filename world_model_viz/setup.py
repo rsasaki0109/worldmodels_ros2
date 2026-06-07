@@ -7,7 +7,7 @@ package_name = "world_model_viz"
 
 setup(
     name=package_name,
-    version="0.6.0",
+    version="0.7.0",
     packages=find_packages(exclude=["test"]),
     data_files=[
         ("share/ament_index/resource_index/packages", ["resource/" + package_name]),
@@ -26,6 +26,8 @@ setup(
     entry_points={
         "console_scripts": [
             "occupancy_marker_node = world_model_viz.occupancy_marker_node:main",
+            "counterfactual_marker_node = world_model_viz.counterfactual_marker_node:main",
+            "costmap_preview_node = world_model_viz.costmap_preview_node:main",
         ],
     },
 )
