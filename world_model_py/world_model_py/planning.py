@@ -75,6 +75,7 @@ class RetrievalDynamics:
         # L2-normalise latents so cosine geometry == euclidean on the sphere.
         self._lat_n = self._unit(self.latents)
         self._deltas = self.next_latents - self.latents
+        self._src = np.arange(n)                  # source-step index of each transition
         # typical action scale, to make the action distance commensurate.
         self._act_scale = float(np.std(self.actions)) + 1e-6
         self.k = int(max(1, min(self.k, n)))
@@ -83,24 +84,37 @@ class RetrievalDynamics:
     def _unit(x: np.ndarray) -> np.ndarray:
         return x / (np.linalg.norm(x, axis=-1, keepdims=True) + 1e-8)
 
-    def step_with_index(self, latent: np.ndarray, action: np.ndarray) -> tuple:
+    def step_with_index(
+        self, latent: np.ndarray, action: np.ndarray, after: int = -1
+    ) -> tuple:
         """Predict next latent; also return the index of the nearest memory entry
-        (used to decode the imagined latent back to a real frame)."""
+        (used to decode the imagined latent back to a real frame).
+
+        ``after`` adds a *forward-in-time* bias: only transitions whose source
+        step is > ``after`` are considered. Repeatedly passing the last visited
+        index makes a rollout march forward through the episode instead of
+        collapsing onto a single fixed point.
+        """
         latent = np.asarray(latent, dtype=np.float32).ravel()
         action = np.asarray(action, dtype=np.float32).ravel()
         q = latent / (np.linalg.norm(latent) + 1e-8)
         lat_d = 1.0 - self._lat_n @ q                       # (N,) cosine distance
         act_d = np.linalg.norm(self.actions - action[None, :], axis=1) / self._act_scale
         dist = lat_d + self.action_weight * act_d
-        idx = np.argpartition(dist, self.k - 1)[: self.k]
+        if after >= 0:
+            blocked = self._src <= after
+            if blocked.any() and not blocked.all():         # keep at least one option
+                dist = np.where(blocked, np.inf, dist)
+        kk = min(self.k, int(np.isfinite(dist).sum()))
+        idx = np.argpartition(dist, kk - 1)[:kk]
         w = 1.0 / (dist[idx] + 1e-6)
         w = w / w.sum()
         delta = (w[:, None] * self._deltas[idx]).sum(axis=0)
         nearest = int(idx[int(np.argmin(dist[idx]))])
         return (latent + delta).astype(np.float32), nearest
 
-    def step(self, latent: np.ndarray, action: np.ndarray) -> np.ndarray:
-        return self.step_with_index(latent, action)[0]
+    def step(self, latent: np.ndarray, action: np.ndarray, after: int = -1) -> np.ndarray:
+        return self.step_with_index(latent, action, after)[0]
 
 
 @dataclass

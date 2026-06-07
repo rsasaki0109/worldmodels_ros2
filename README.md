@@ -29,6 +29,9 @@ briefly occluded. Calibrates on nominal operation, **no failure data needed**
 - **Compiled Nav2 costmap layer** — predicted occupancy flows straight into the
   Nav2 costmap (real `nav2_costmap_2d::Layer`, not a mock).
 - **rosbag2 → LeRobot** dataset export, **GPU-free**.
+- **Counterfactual imagination & planning (learning-free)** — imagine *"what if I
+  steer left / straight / right"* and plan to an image goal from an episodic
+  retrieval world model, **no dynamics training**; validated on real public data.
 - **RViz + Foxglove** imagination viewer (a playable MCAP clip is bundled).
 - **Live benchmark dashboard**, republished on every push →
   <https://rsasaki0109.github.io/worldmodels_ros2/>.
@@ -316,6 +319,47 @@ ros2 run world_model_py runtime_node --ros-args \
 Endpoints: `POST /predict_future` (FuturePrediction JSON), `GET /health`. The
 local↔remote round-trip is tested over real HTTP with stdlib only — the
 `remote` adapter reproduces the host's output exactly.
+
+## Counterfactual imagination & planning (learning-free)
+
+![counterfactual driving imagination on real public data](docs/counterfactual.gif)
+
+<sub>**"What if I steer left / straight / right?"** From a single current frame, an
+episodic World Model imagines a *different future for each action* — on real
+public **L2D** driving video, with **zero dynamics training**. A frozen I-JEPA
+encoder + an action-conditioned **retrieval dynamics** (k-NN over real
+`(latent, steering) → next_latent` transitions) is rolled out under each
+counterfactual steering; imagined latents are decoded to real frames by nearest
+neighbour. The branches genuinely diverge by action (L–R latent distance 0.65).</sub>
+
+The encoder gives latents; `world_model_py.planning` adds the two pieces that
+turn that into goal-reaching behaviour **without training a dynamics model**:
+
+- **`RetrievalDynamics`** — non-parametric latent dynamics from a memory of real
+  `(latent, action, next_latent)` transitions (k-NN regression). The retrieval
+  analogue of DINO-WM / PLDM; runs on a CPU.
+- **`plan_to_goal`** — CEM / random-shooting planner that rolls action sequences
+  through the dynamics to reach a **goal latent** (visual foresight to an image goal).
+- **`decode_trajectory`** — nearest-neighbour decode of imagined latents back to
+  real frames (JEPA has no pixel decoder), making the imagination watchable.
+
+Pure numpy, ROS-free and torch-free; unit-tested on CI with a toy linear system.
+
+**Validated on real public data** (reproducible scripts, GPU optional):
+
+| script | claim under test | result |
+|---|---|---|
+| `test/validate_real_counterfactual.py` | the action changes the imagined future | L/S/R branches diverge, **L–R 0.65** |
+| `test/validate_real_planning.py` | plan reaches an image goal (LeRobot SO-101) | reconstructs the real trajectory, **corr 0.97**, beats no-op/random |
+| `test/validate_real_foresight.py` | roll the road ahead from one frame (L2D) | trajectory traced, idx-vs-time **corr 1.00** |
+
+Honest scope: retrieval decodes imagined latents to *real remembered frames* (no
+pixel synthesis), so this shows **action-conditioned imagination from experience**,
+not pixel-accurate generation. Grounded in latent-planning world-model research:
+[DINO-WM](https://arxiv.org/abs/2411.04983),
+[V-JEPA 2-AC](https://arxiv.org/abs/2506.09985),
+[PLDM](https://arxiv.org/abs/2502.14819),
+[Navigation World Models](https://arxiv.org/abs/2412.03572).
 
 ## Runtime anomaly / OOD monitor
 

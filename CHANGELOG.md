@@ -4,6 +4,31 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [0.3.0] - 2026-06-08
+
+Learning-free imagination & planning: turn the frozen JEPA encoder into
+goal-reaching and counterfactual behaviour with no dynamics training, validated
+on real public driving and robot data.
+
+### Added
+- **Latent planning** (`world_model_py.planning`) — `RetrievalDynamics`
+  (non-parametric latent dynamics from a memory of real `(latent, action,
+  next_latent)` transitions; the retrieval analogue of DINO-WM / PLDM),
+  `plan_to_goal` (CEM / random-shooting planner to a goal latent), and
+  `decode_trajectory` (nearest-neighbour decode of imagined latents to frames).
+  Pure numpy, ROS-free, torch-free; 6 unit tests on a toy linear system.
+- **Counterfactual imagination demo** (`test/validate_real_counterfactual.py`) —
+  action-conditioned retrieval on real public **L2D** driving video: imagine
+  "what if I steer left / straight / right"; the branches diverge by action
+  (L–R latent distance 0.65). Renders `docs/counterfactual.gif`.
+- **Visual-foresight demos** on real public data —
+  `validate_real_planning.py` (plan to an image goal on LeRobot SO-101;
+  reconstructs the real trajectory, corr 0.97, beats no-op/random) and
+  `validate_real_foresight.py` (roll the road ahead from one frame, corr 1.00).
+
+### Changed
+- README: new "Counterfactual imagination & planning" section + Highlights entry.
+
 ## [0.2.0] - 2026-06-07
 
 A second real model, a compiled Nav2 plugin, a plugin hub, and the first
