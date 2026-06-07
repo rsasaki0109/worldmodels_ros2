@@ -335,16 +335,18 @@ ros2 topic echo /world_model_monitor/anomaly
 ```
 
 **Validated on real public data** (`test/validate_real_surprise.py`, real
-LeRobot SO-101 footage):
+LeRobot SO-101 footage, scene change measured over each encoder's window —
+1 frame for the image model, the clip for the video model):
 
-| adapter | within-scene surprise | scene/view change | separation |
+| adapter | within-scene baseline | scene-change peak | separation |
 |---|---|---|---|
-| `ijepa` (image, per-frame) | mean 0.010 (max 0.081) | ~0.20 | **20×**, fully separable |
-| `vjepa2` (video, 8-frame clip) | mean 0.016 (max 0.109) | ~0.08 | 4.8× (smoothed) |
+| `ijepa` (image, per-frame) | mean 0.012 (max 0.087) | 0.14–0.21 | **12×**, fully separable |
+| `vjepa2` (video, 8-frame clip) | mean 0.007 (max 0.014) | ~0.07 | **9.8×**, fully separable |
 
-The anomaly signal is semantically grounded, not noise. The image encoder is
-sharpest for *instantaneous* events; the video encoder's clip buffer trades
-sharpness for temporal context (its surprise rises over the whole transition).
+Both **fully separate** scene changes from within-scene frames (every cut
+exceeds every nominal frame) — the anomaly signal is semantically grounded on
+genuine robot data. The image encoder reacts in a single frame; the video
+encoder's surprise rises over the clip transition (hence the windowed metric).
 
 The detector core (`world_model_py.anomaly.AnomalyDetector`) is ROS-free and
 unit-tested. This follows recent World-Model failure/OOD-monitoring work, e.g.
