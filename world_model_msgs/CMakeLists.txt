@@ -20,6 +20,7 @@ rosidl_generate_interfaces(${PROJECT_NAME}
   "msg/RiskScore.msg"
   "msg/Rollout.msg"
   "srv/ScoreTrajectories.srv"
+  "srv/PlanToGoal.srv"
   "action/PredictFuture.action"
   DEPENDENCIES std_msgs sensor_msgs nav_msgs
 )

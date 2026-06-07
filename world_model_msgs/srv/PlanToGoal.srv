@@ -1,0 +1,15 @@
+# Plan an action sequence whose imagined future reaches a goal image.
+#
+# A learning-free episodic World Model (retrieval dynamics over a memory of real
+# transitions + a CEM planner) imagines candidate action rollouts in latent
+# space and returns the one that lands closest to the goal -- visual foresight
+# to an image goal ("World Model版 Nav2").
+
+sensor_msgs/Image goal_image       # the image to reach
+sensor_msgs/Image current_image    # the current observation
+uint32 horizon                     # plan length in steps (0 -> node default)
+---
+ActionCondition planned_action     # the planned action sequence
+float32 final_cost                 # goal cosine distance achieved (lower = closer)
+float32 start_cost                 # goal distance from the start (for context)
+bool success

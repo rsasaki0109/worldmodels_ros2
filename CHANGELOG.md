@@ -4,6 +4,18 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **`PlanToGoal` ROS 2 service + `planning_node`** — plan to an image goal in a
+  World Model's latent space via the learning-free retrieval planner; returns a
+  planned `ActionCondition`, final/start goal cost. New
+  `world_model_msgs/srv/PlanToGoal.srv`; in-process service test (2).
+
+### Changed
+- Promoted the counterfactual imagination GIF to the README hero; moved the
+  anomaly-monitor GIF into its own section.
+
 ## [0.3.0] - 2026-06-08
 
 Learning-free imagination & planning: turn the frozen JEPA encoder into

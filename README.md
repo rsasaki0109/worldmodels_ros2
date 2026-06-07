@@ -355,6 +355,23 @@ Pure numpy, ROS-free and torch-free; unit-tested on CI with a toy linear system.
 | `test/validate_real_planning.py` | plan reaches an image goal (LeRobot SO-101) | reconstructs the real trajectory, **corr 0.97**, beats no-op/random |
 | `test/validate_real_foresight.py` | roll the road ahead from one frame (L2D) | trajectory traced, idx-vs-time **corr 1.00** |
 
+**Plan to an image goal from ROS 2** — the same planner behind a service, so a
+Nav2-style consumer can ask the World Model to reach a goal image:
+
+```bash
+# build an experience.npz (latents, actions, next_latents) from any rosbag /
+# dataset — the validate_real_* scripts show how — then:
+ros2 run world_model_py planning_node --ros-args \
+    -p adapter:=ijepa -p memory_path:=experience.npz
+# call it: current + goal image -> a planned action sequence
+ros2 service call /world_model_planning/plan_to_goal \
+    world_model_msgs/srv/PlanToGoal "{...}"
+#   -> planned_action (ActionCondition) · final_cost · start_cost · success
+```
+
+The node (`world_model_py/planning_node.py`) is a thin ROS wrapper; the planner
+stays ROS-free. Service wiring is covered by an in-process test.
+
 Honest scope: retrieval decodes imagined latents to *real remembered frames* (no
 pixel synthesis), so this shows **action-conditioned imagination from experience**,
 not pixel-accurate generation. Grounded in latent-planning world-model research:
