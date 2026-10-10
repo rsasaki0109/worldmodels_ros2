@@ -16,6 +16,10 @@ torch/transformers, so:
 This is an *encoder*, not a dynamics model: ``predict_future`` returns a
 persistence rollout (latent held constant over the horizon). Action-conditioned
 prediction arrives with V-JEPA2-AC; the contract does not change.
+
+Attach a trained :class:`world_model_py.occupancy_head.OccupancyHead`
+(``occupancy_head=path.npz``) and the adapter also predicts ``FutureOccupancy``
+from the latent, so a real encoder can drive the Nav2 costmap layer / critic.
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ from typing import Optional, Protocol
 
 import numpy as np
 
+from ..occupancy_head import load_head
 from .base import (
     ActionCondition,
     FuturePrediction,
@@ -45,11 +50,14 @@ class IJepaAdapter(WorldModelAdapter):
 
     name = "ijepa"
 
-    def __init__(self, encoder: FrameEncoder, dt: float = 0.1, name: str = "ijepa"):
+    def __init__(self, encoder: FrameEncoder, dt: float = 0.1, name: str = "ijepa",
+                 occupancy_head=None):
         self._enc = encoder
-        self.dt = float(dt)
         self.name = name
         self._prev: Optional[np.ndarray] = None
+        self._head = load_head(occupancy_head)
+        # the head was trained at a fixed step; its dt is the truth for the rollout
+        self.dt = float(self._head.dt) if self._head is not None else float(dt)
 
     def _latent(self, obs: Observation) -> np.ndarray:
         if obs.image is None or getattr(obs.image, "size", 0) == 0:
@@ -82,20 +90,35 @@ class IJepaAdapter(WorldModelAdapter):
         horizon = max(1, int(horizon))
 
         latent = self._latent(obs)
+        prev = self._prev
         score, confidence = self._surprise(latent)
-        return FuturePrediction(
+        pred = FuturePrediction(
             dt=self.dt,
             latents=[latent.copy() for _ in range(horizon)],   # persistence rollout
             risk=score,
             risk_confidence=confidence,
             risk_label=f"{self.name}-surprise",
         )
+        if self._head is not None:
+            ego = None
+            if obs.action_history is not None and np.size(obs.action_history):
+                ego = np.atleast_2d(np.asarray(obs.action_history, np.float32))[-1]
+            # the head predicts a fixed horizon; never extrapolate past it
+            pred.occupancy = self._head.predict_grids(latent, prev, ego)[:horizon]
+            pred.occupancy_resolution = self._head.resolution
+            pred.occupancy_origin = self._head.origin
+        return pred
 
     def reset(self) -> None:
         self._prev = None
 
     def info(self) -> dict:
         d = {"name": self.name, "remote": False, "kind": "jepa-encoder"}
+        if self._head is not None:
+            d["occupancy_head"] = {"horizon": self._head.horizon,
+                                   "grid": list(self._head.grid_shape),
+                                   "resolution": self._head.resolution,
+                                   "dt": self._head.dt}
         try:
             d.update(self._enc.info())
         except Exception:  # noqa: BLE001
@@ -180,6 +203,16 @@ class _HFEncoder:
         self._latent_dim = int(latent.shape[-1])
         return latent.astype(np.float32)
 
+    def embed_batch(self, images) -> np.ndarray:
+        """Embed a list of (H, W, 3) uint8 frames in one forward pass -> (N, D)."""
+        torch = self._torch
+        pv = torch.cat([self._to_pixel_values(im) for im in images], dim=0)
+        with torch.no_grad():
+            out = self.model(pixel_values=pv)
+        latents = out.last_hidden_state.mean(dim=1).float().cpu().numpy()
+        self._latent_dim = int(latents.shape[-1])
+        return latents.astype(np.float32)
+
     def info(self) -> dict:
         return {
             "model_id": self.model_id,
@@ -190,15 +223,44 @@ class _HFEncoder:
         }
 
 
+class PixelEncoder:
+    """GPU-free baseline FrameEncoder: the downsampled image itself is the
+    latent. Used to check whether a learned encoder actually helps a head, and
+    to exercise the training pipeline with no torch model download."""
+
+    def __init__(self, size: int = 24):
+        self.size = int(size)
+
+    def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
+        img = np.asarray(image_hwc_uint8, np.float32)
+        if img.ndim == 2:
+            img = np.repeat(img[:, :, None], 3, axis=2)
+        h, w = img.shape[:2]
+        ys = (np.arange(self.size + 1) * h) // self.size
+        xs = (np.arange(self.size + 1) * w) // self.size
+        # area-average pooling onto a size x size grid (pure numpy)
+        rows = np.add.reduceat(img[:, :, :3], ys[:-1], axis=0) / np.diff(ys)[:, None, None]
+        pooled = np.add.reduceat(rows, xs[:-1], axis=1) / np.diff(xs)[None, :, None]
+        return (pooled / 255.0).ravel().astype(np.float32)
+
+    def embed_batch(self, images) -> np.ndarray:
+        return np.stack([self.embed(im) for im in images])
+
+    def info(self) -> dict:
+        return {"encoder": "pixels", "size": self.size, "latent_dim": self.size * self.size * 3}
+
+
 def make_ijepa_adapter(**kwargs) -> IJepaAdapter:
     """Registry factory: build an I-JEPA adapter backed by a real HF encoder.
 
-    Accepts encoder kwargs (model_id, device, dtype, image_size). Importing the
-    encoder (and thus torch/transformers) happens only when this is called.
+    Accepts encoder kwargs (model_id, device, dtype, image_size) plus
+    ``occupancy_head`` (a trained head ``.npz`` path). Importing the encoder
+    (and thus torch/transformers) happens only when this is called.
     """
     adapter_dt = kwargs.pop("dt", 0.1)
+    head = kwargs.pop("occupancy_head", None)
     encoder = _HFEncoder(**kwargs)
-    return IJepaAdapter(encoder, dt=adapter_dt)
+    return IJepaAdapter(encoder, dt=adapter_dt, occupancy_head=head)
 
 
 class _VJepa2Encoder:
@@ -283,5 +345,6 @@ def make_vjepa2_adapter(**kwargs) -> IJepaAdapter:
     """Registry factory: a V-JEPA 2 video adapter (camera clip -> latent ->
     surprise). Imports torch / torch.hub only when called."""
     adapter_dt = kwargs.pop("dt", 0.1)
+    head = kwargs.pop("occupancy_head", None)
     encoder = _VJepa2Encoder(**kwargs)
-    return IJepaAdapter(encoder, dt=adapter_dt, name="vjepa2")
+    return IJepaAdapter(encoder, dt=adapter_dt, name="vjepa2", occupancy_head=head)

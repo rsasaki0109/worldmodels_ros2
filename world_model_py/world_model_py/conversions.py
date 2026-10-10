@@ -110,7 +110,10 @@ def risk_to_msg(pred: FuturePrediction, header: Header) -> RiskScoreMsg:
     return msg
 
 
-def occupancy_to_grids(pred: FuturePrediction, header: Header, resolution: float = 0.1):
+def occupancy_to_grids(pred: FuturePrediction, header: Header, resolution: Optional[float] = None):
+    if resolution is None:
+        resolution = pred.occupancy_resolution
+    ox, oy = pred.occupancy_origin
     grids = []
     for g in pred.occupancy:
         grid = OccupancyGrid()
@@ -118,6 +121,8 @@ def occupancy_to_grids(pred: FuturePrediction, header: Header, resolution: float
         arr = np.asarray(g, dtype=np.int8)
         grid.info.resolution = float(resolution)
         grid.info.height, grid.info.width = arr.shape
+        grid.info.origin.position.x = float(ox)
+        grid.info.origin.position.y = float(oy)
         grid.info.origin.orientation.w = 1.0
         grid.data = arr.ravel().tolist()
         grids.append(grid)
