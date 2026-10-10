@@ -27,18 +27,22 @@ from dataclasses import dataclass
 
 import numpy as np
 
+from .camera_model import CameraModel
+
 
 @dataclass
 class SimConfig:
-    image_size: int = 128          # square camera image (pixels)
+    image_size: int = 256          # square camera image (pixels)
     hfov_deg: float = 90.0         # horizontal field of view
     cam_height: float = 1.5        # metres above the ground
     # image row of the horizon, as a fraction: < 0.5 is an off-centre principal
     # point (a sensor shifted down), which looks at the near ground the way a
     # pitched-down camera would while keeping the projection exactly pinhole.
     horizon_row: float = 0.1
-    grid_size: int = 32            # BEV cells per side
-    resolution: float = 0.25       # metres per BEV cell -> 8 m x 8 m
+    # 0.5 m cells: at 128 px focal length a cell still spans >= 1.5 px out to
+    # 8 m; finer cells are below the camera's depth resolution at range.
+    grid_size: int = 16            # BEV cells per side
+    resolution: float = 0.5        # metres per BEV cell -> 8 m x 8 m
     dt: float = 0.2                # seconds per step
     n_obstacles: tuple = (4, 8)    # inclusive range per episode
     obstacle_speed: float = 1.0    # max obstacle speed (m/s)
@@ -52,6 +56,26 @@ class SimConfig:
         """(x, y) of the grid's lower-left corner in the ego frame."""
         return (0.0, -self.grid_size * self.resolution / 2.0)
 
+    @property
+    def focal(self) -> float:
+        return (self.image_size / 2.0) / np.tan(np.radians(self.hfov_deg) / 2.0)
+
+    def camera(self) -> CameraModel:
+        """The simulator's camera as a base-frame projection (what a real robot
+        builds from CameraInfo + TF)."""
+        s = self.image_size
+        return CameraModel.pinhole(s, s, self.focal, self.focal, s / 2.0, s * self.horizon_row,
+                                   position=(0.0, 0.0, self.cam_height))
+
+    def cell_centers(self) -> np.ndarray:
+        """(G, G, 2) ego-frame (x, y) of every cell centre, ``[i, j]`` = (y, x)."""
+        g, res = self.grid_size, self.resolution
+        x0, y0 = self.origin
+        xs = x0 + (np.arange(g) + 0.5) * res
+        ys = y0 + (np.arange(g) + 0.5) * res
+        X, Y = np.meshgrid(xs, ys)
+        return np.stack([X, Y], -1)
+
 
 @dataclass
 class Episode:
@@ -62,6 +86,7 @@ class Episode:
     ego: np.ndarray          # (T, 3) float32 world pose [x, y, yaw] at frame t
     obstacles: np.ndarray    # (T, N, 2) float32 world positions at frame t
     radii: np.ndarray        # (N,) float32
+    heights: np.ndarray = None  # (N,) float32 obstacle heights (for visibility)
 
     def __len__(self) -> int:
         return int(self.frames.shape[0])
@@ -99,6 +124,31 @@ def future_occupancy(ep: Episode, t: int, horizon: int, cfg: SimConfig) -> np.nd
     ])
 
 
+def visibility(ep: Episode, t: int, cfg: SimConfig) -> np.ndarray:
+    """Cells the camera can see at frame ``t`` (ego frame at ``t``), (G, G) bool.
+
+    A cell is visible when its ground point projects into the image and the
+    camera ray to it is not blocked by an obstacle taller than the ray where it
+    enters that obstacle. A cell covered by an obstacle is not occluded by that
+    same obstacle (its front face is what the camera sees). Mirrors the camera
+    visibility masks real occupancy benchmarks (Occ3D) ship with their labels."""
+    centers = cfg.cell_centers().reshape(-1, 2)
+    _, _, vis = cfg.camera().project(np.concatenate([centers, np.zeros((len(centers), 1))], 1))
+    rel = _to_ego(ep.obstacles[t], ep.ego[t])                     # (N, 2)
+    heights = ep.heights if ep.heights is not None else np.full(len(rel), np.inf)
+    plen2 = (centers ** 2).sum(1)                                 # (C,)
+    for o, r, ho in zip(rel, ep.radii, heights):
+        # closest approach of the ray origin->cell to the obstacle centre
+        s = np.clip(centers @ o / plen2, 0.0, 1.0)
+        d2 = ((s[:, None] * centers - o) ** 2).sum(1)
+        hit = d2 < r * r
+        s_in = s - np.sqrt(np.clip(r * r - d2, 0.0, None) / plen2)
+        own = ((centers - o) ** 2).sum(1) <= (r + 0.5 * cfg.resolution) ** 2
+        ray_h = cfg.cam_height * (1.0 - s_in)
+        vis &= ~(hit & ~own & (s_in > 0) & (s_in < 1) & (ray_h <= ho))
+    return vis.reshape(cfg.grid_size, cfg.grid_size)
+
+
 def current_occupancy(ep: Episode, t: int, cfg: SimConfig) -> np.ndarray:
     """Occupancy at frame ``t`` itself (ego frame at ``t``), (G, G) bool."""
     return rasterize(_to_ego(ep.obstacles[t], ep.ego[t]), ep.radii, cfg)
@@ -110,7 +160,7 @@ class _Renderer:
     def __init__(self, cfg: SimConfig):
         s = cfg.image_size
         self.cfg = cfg
-        self.f = (s / 2.0) / np.tan(np.radians(cfg.hfov_deg) / 2.0)
+        self.f = cfg.focal
         self.cx = s / 2.0
         self.cy = s * cfg.horizon_row
         vv, uu = np.mgrid[0:s, 0:s].astype(np.float32) + 0.5
@@ -223,4 +273,5 @@ def rollout_episode(steps: int, seed: int, cfg: SimConfig | None = None) -> Epis
         ego=np.asarray(egos, np.float32),
         obstacles=np.asarray(obs, np.float32),
         radii=radii,
+        heights=np.asarray(heights, np.float32),
     )
