@@ -32,11 +32,11 @@ import numpy as np
 class SimConfig:
     image_size: int = 128          # square camera image (pixels)
     hfov_deg: float = 90.0         # horizontal field of view
-    cam_height: float = 1.2        # metres above the ground
+    cam_height: float = 1.5        # metres above the ground
     # image row of the horizon, as a fraction: < 0.5 is an off-centre principal
     # point (a sensor shifted down), which looks at the near ground the way a
     # pitched-down camera would while keeping the projection exactly pinhole.
-    horizon_row: float = 0.25
+    horizon_row: float = 0.1
     grid_size: int = 32            # BEV cells per side
     resolution: float = 0.25       # metres per BEV cell -> 8 m x 8 m
     dt: float = 0.2                # seconds per step
