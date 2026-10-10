@@ -213,9 +213,21 @@ class OccupancyHead:
         v = np.where(p <= t, 50.0 * p / t, 50.0 + 50.0 * (p - t) / (1.0 - t))
         return np.clip(np.rint(v), 0, 100).astype(np.int8)
 
+    def fov_mask(self) -> np.ndarray:
+        """(rows, cols) bool: cells whose ground point projects into the image.
+        The head has no evidence outside it."""
+        rows, cols = self.grid_shape
+        _, w = lift_table(self.camera, self.grid_shape, self.resolution, self.origin,
+                            (0.0,), (self.camera.height, self.camera.width))
+        return (w[0].sum(-1) > 0).reshape(rows, cols)
+
     def predict_grids(self, fmap, prev_fmap=None, ego=None) -> list:
-        """One observation -> list of ``horizon`` (rows, cols) int8 grids."""
-        return list(self.to_occupancy_values(self.predict_proba(fmap, prev_fmap, ego)))
+        """One observation -> list of ``horizon`` (rows, cols) int8 grids. Cells
+        outside the camera's field of view are -1 (OccupancyGrid "unknown"), so a
+        costmap never marks an obstacle the camera could not have seen."""
+        values = self.to_occupancy_values(self.predict_proba(fmap, prev_fmap, ego))
+        values[:, ~self.fov_mask()] = -1
+        return list(values)
 
     # --- persistence ------------------------------------------------------------
     def save(self, path: str) -> None:

@@ -185,6 +185,10 @@ def test_adapter_publishes_head_occupancy():
     assert len(pred.latents) == 8
     assert len(pred.occupancy) == 4                   # never past the head's horizon
     assert pred.occupancy[0].shape == (8, 8) and pred.occupancy[0].dtype == np.int8
+    fov = head.fov_mask()
+    assert fov.any() and not fov.all()
+    assert np.all(pred.occupancy[0][~fov] == -1)          # unseen -> unknown
+    assert np.all(pred.occupancy[0][fov] >= 0)
     assert pred.occupancy_resolution == 1.0 and pred.occupancy_origin == (0.0, -4.0)
     assert wm.dt == head.dt
     assert wm.predict_future(obs, horizon=2).occupancy.__len__() == 2

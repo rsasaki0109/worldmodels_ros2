@@ -100,7 +100,8 @@ def bev(grid: np.ndarray) -> np.ndarray:
 
 def save_preview(path, frames, target, mask, proba, threshold, n=4, steps=(0, 3, 7)):
     """camera | (GT vs pred) at a few horizon steps: white = hit, green = missed,
-    red = false alarm, dark blue = not visible at t (not scored)."""
+    red = false alarm; dark blue = not visible at t (not scored), with predictions
+    there in dim purple."""
     try:
         from PIL import Image
     except ImportError:
@@ -117,9 +118,10 @@ def save_preview(path, frames, target, mask, proba, threshold, n=4, steps=(0, 3,
             g, p, m = bev(target[i, k]), bev(proba[i, k] >= threshold), bev(mask[i])
             tile = np.zeros(g.shape + (3,), np.uint8) + 25
             tile[~m] = (20, 30, 70)
-            tile[g & p] = (255, 255, 255)
-            tile[g & ~p] = (40, 200, 70)
-            tile[~g & p] = (230, 60, 60)
+            tile[~m & p] = (90, 50, 110)
+            tile[m & g & p] = (255, 255, 255)
+            tile[m & g & ~p] = (40, 200, 70)
+            tile[m & ~g & p] = (230, 60, 60)
             rep = s // g.shape[0]
             tiles.append(np.kron(tile, np.ones((rep, rep, 1), np.uint8)))
         rows.append(np.concatenate([np.pad(t, ((2, 2), (2, 2), (0, 0))) for t in tiles], 1))

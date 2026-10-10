@@ -598,6 +598,60 @@ unit-tested. This follows recent World-Model failure/OOD-monitoring work, e.g.
 [failure detection without failure data](https://arxiv.org/html/2503.08558v1),
 and [foundation world models detecting manipulation failures](https://arxiv.org/pdf/2603.06987).
 
+## Future occupancy from a real encoder (JEPA → Nav2)
+
+JEPA encoders output latents, but the Nav2 costmap layer and DWB critic consume
+`FutureOccupancy`. A trained **occupancy head** bridges the two: attach it to
+`ijepa` / `vjepa2` and the runtime publishes predicted occupancy for the next
+`horizon` steps.
+
+```bash
+ros2 run world_model_py runtime_node --ros-args \
+    -p adapter:=ijepa -p occupancy_head:=occupancy_head_ijepa.npz
+#   ~/future_occupancy  (cells outside the camera's view are -1 = unknown)
+```
+
+How it works (`world_model_py/occupancy_head.py`):
+
+- **Camera-geometry lift.** Every BEV cell is projected into the camera
+  (a short pillar of heights above the ground), and the encoder's **patch-token
+  map** is sampled there. The geometry is a `CameraModel` (base-frame 3×4
+  projection); a real robot builds it from `CameraInfo` + TF.
+- **Small BEV CNN.** It combines the lifted features of the current frame, the
+  change since the previous frame, and the last ego command, then outputs per-step
+  occupancy logits.
+- **Training uses torch on a GPU; inference is pure numpy.** The head is a single
+  `.npz` (< 1 MB), so the ROS runtime and CI need no torch. Its stored decision
+  threshold maps to occupancy 50, matching the costmap's `occupied_threshold`.
+
+Training data is bootstrapped from a seeded simulator (`occupancy_sim`). It
+renders camera frames and computes the exact future occupancy plus an
+Occ3D-style **camera-visibility mask**. Loss and scores count only cells
+visible at the observation time. Train on Colab (free T4 is enough) with
+[`notebooks/train_occupancy_head.ipynb`](notebooks/train_occupancy_head.ipynb),
+or locally:
+
+```bash
+python3 world_model_py/test/train_occupancy_head.py --encoder pixels   # CPU, ~10 min
+WM_DEVICE=cuda python3 world_model_py/test/train_occupancy_head.py --encoder ijepa
+```
+
+Held-out pooled IoU (visible cells, 16×16 grid @ 0.5 m, dt 0.2 s), GPU-free
+`pixels` encoder:
+
+| method | t+1 | t+4 | t+8 | mean |
+|---|---|---|---|---|
+| `prior` (no image) | 0.06 | 0.06 | 0.05 | 0.05 |
+| **head on pixels** | **0.65** | **0.41** | **0.18** | **0.39** |
+| `persist-gt` (privileged: true current occupancy held) | 0.87 | 0.55 | 0.30 | 0.54 |
+
+Honest scope: these numbers come from a synthetic world. They validate the
+pipeline and the head design, not real-world accuracy. Real data with LiDAR-derived
+labels (nuScenes + Occ3D) is next. Measured design notes: a head on the
+mean-pooled latent, or a dense image→grid MLP, overfits and stays near IoU 0.1.
+The fixed geometric lift is what makes the head generalise. At 0.25 m cells the
+camera's depth resolution beyond ~4 m (< 1.5 px per cell) caps any method.
+
 ## Nav2 avoidance preview (predicted occupancy → detour)
 
 ![World Model predicted occupancy steers around the lethal union](docs/nav2_avoidance.gif)

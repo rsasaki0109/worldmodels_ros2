@@ -4,6 +4,30 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Occupancy head** (`world_model_py.occupancy_head.OccupancyHead`): the
+  encoder's patch-token map is lifted into BEV through the camera geometry and fed
+  to a small BEV CNN, which predicts `FutureOccupancy`. Training uses torch;
+  inference is pure numpy (one `.npz`). Attach it with
+  `runtime_node -p occupancy_head:=...` (`ijepa` / `vjepa2`). Cells outside the
+  camera's view are published as -1 (unknown).
+- **`CameraModel`**: base-frame pinhole projection, built from config or from
+  `CameraInfo` + TF.
+- **`occupancy_sim`**: a seeded camera + exact future occupancy simulator with
+  camera-visibility masks, used to bootstrap training data.
+- **`test/train_occupancy_head.py`** and the Colab notebook
+  **`notebooks/train_occupancy_head.ipynb`**: train and score (visible-cell
+  pooled IoU) against `prior` / `persist-gt` / `pixels` baselines.
+- Encoders expose `embed_with_map` (patch tokens). The latent stays the token
+  mean, so existing behaviour is unchanged.
+
+### Changed
+- `FuturePrediction` carries `occupancy_resolution` / `occupancy_origin`, the
+  wire format sends them (with defaults kept for old servers), and
+  `occupancy_to_grids` writes them into `OccupancyGrid.info`.
+
 ## [0.7.1] - 2026-06-08
 
 LeRobot loader validation and a compiled Nav2 DWB critic plugin.
