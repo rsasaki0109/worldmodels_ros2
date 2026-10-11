@@ -91,13 +91,13 @@ _FALLBACK_MSGDEFS = {
 
 
 def _ensure_types(store, conns) -> None:
-    """Register any message type the typestore lacks: from the bag's own
-    definition when it has one, else from a built-in fallback."""
+    """Register any message type the typestore lacks: from a built-in definition
+    when we have one (bags can store wrong or empty ones), else from the bag."""
     from rosbags.typesys import get_types_from_msg
     for c in conns:
         if c.msgtype in store.types:
             continue
-        text = getattr(getattr(c, "msgdef", None), "data", "") or _FALLBACK_MSGDEFS.get(c.msgtype, "")
+        text = _FALLBACK_MSGDEFS.get(c.msgtype, "") or getattr(getattr(c, "msgdef", None), "data", "")
         if not text:
             raise KeyError(f"no message definition for {c.msgtype} ({c.topic})")
         store.register(get_types_from_msg(text, c.msgtype))
