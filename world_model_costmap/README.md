@@ -15,6 +15,9 @@ the mock *ranks* candidate paths offline; this layer feeds the live costmap.
 - Each update it clears its buffer and marks the **union of predicted occupancy
   over the whole horizon**: any cell `>= occupied_threshold` becomes
   `LETHAL_OBSTACLE`, then `updateWithMax` merges it into the master costmap.
+  The previous cycle's marked extent is re-reported in `updateBounds`, so cells
+  a prediction no longer covers are cleared from the master. Cells outside the
+  camera's view are published as `-1` and ignored.
 - Assumes the grids are in the costmap's global frame (TF reprojection of a
   differing frame is future work).
 
@@ -44,5 +47,8 @@ local_costmap:
 
 Compiles against Nav2 Jazzy, exports the pluginlib class, and registers in the
 ament index. **Nav2 loopback smoke** (`smoke_nav2_loopback.py`) confirms the
-layer subscribes to `future_occupancy` inside a live stack. Full Gazebo +
-navigation-to-goal is not yet validated here.
+layer subscribes to `future_occupancy` inside a live stack.
+`world_model_py/test/integration_occupancy_nav2.py` feeds real camera
+predictions (I-JEPA + a trained occupancy head) through a standalone costmap.
+It checks that the lethal cells equal the predicted union every frame.
+Full Gazebo + navigation-to-goal is not yet validated here.

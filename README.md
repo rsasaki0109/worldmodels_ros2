@@ -694,6 +694,26 @@ parked or stopped vehicles. There is still a wide gap to `persist-gt`, which
 reads the labels: monocular range to small or distant agents is the limit at
 this data scale.
 
+**End-to-end in ROS 2 + Nav2.** `test/integration_occupancy_nav2.py` checks
+the whole path on real nuScenes frames. It runs `runtime_node` with
+`adapter:=ijepa` and the trained head, feeding a standalone `nav2_costmap_2d`
+whose only plugin is `world_model_costmap::WorldModelLayer`. For every frame it
+checks:
+
+- `FutureOccupancy` has the head's horizon, resolution and origin, with `-1`
+  outside the camera's view;
+- the grids are identical to the head run offline in numpy;
+- the costmap's lethal cells equal the union of the predicted grids.
+
+All 5 frames pass on Jazzy. This check found and fixed a layer bug: obstacles
+from a previous prediction stayed lethal after the prediction moved.
+
+```bash
+source install/setup.bash
+python3 world_model_py/test/integration_occupancy_nav2.py \
+    --head occupancy_head_ijepa.npz --nuscenes-root /data/nuscenes --frames 5
+```
+
 Build the labels anywhere with a CPU (`--labels-only`, ~7 s per scene), then
 encode and train on a GPU. The heads trained on nuScenes data fall under the
 nuScenes terms of use (non-commercial).

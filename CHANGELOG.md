@@ -27,6 +27,17 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - Encoders expose `embed_with_map` (patch tokens). The latent stays the token
   mean, so existing behaviour is unchanged.
 
+- **ROS 2 + Nav2 integration check** (`test/integration_occupancy_nav2.py`):
+  real frames go through `runtime_node` (I-JEPA + trained head) into a live
+  `nav2_costmap_2d` with `WorldModelLayer`. The check requires the grids to
+  match the offline head and the costmap to equal their union.
+
+### Fixed
+- `world_model_costmap::WorldModelLayer` left previously predicted obstacles
+  `LETHAL` after the prediction moved or vanished. The master costmap resets
+  only inside the bounds each layer reports, and the layer reported only this
+  cycle's cells. It now re-reports last cycle's marked extent.
+
 ### Changed
 - `FuturePrediction` carries `occupancy_resolution` / `occupancy_origin`, the
   wire format sends them (with defaults kept for old servers), and
