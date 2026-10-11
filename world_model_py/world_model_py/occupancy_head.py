@@ -416,7 +416,7 @@ class OccupancyHead:
         return head
 
     def calibrate(self, z, z_prev, egos, targets, masks=None, candidates=None,
-                  batch: int = 256) -> float:
+                  batch: int = 16) -> float:
         """Pick the probability threshold maximising pooled (visible-cell) IoU on
         held-out data; stores and returns it."""
         proba = np.concatenate([self.predict_proba_reduced(z[s:s + batch], z_prev[s:s + batch],

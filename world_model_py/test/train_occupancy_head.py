@@ -255,7 +255,8 @@ def save_preview(path, frames, target, mask, proba, threshold, n=4, steps=None):
     log(f"  wrote {path}")
 
 
-def predict(head, d, name, batch=256):
+def predict(head, d, name, batch=16):
+    # numpy im2col on a 48x48 grid is ~15 MB per sample per conv: keep batches small
     return np.concatenate([
         head.predict_proba_reduced(d["z"][name][s:s + batch], d["zp"][name][s:s + batch],
                                    d["ego"][s:s + batch])
