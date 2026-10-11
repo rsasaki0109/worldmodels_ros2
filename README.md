@@ -760,6 +760,79 @@ Build the labels anywhere with a CPU (`--labels-only`, ~7 s per scene), then
 encode and train on a GPU. The heads trained on nuScenes data fall under the
 nuScenes terms of use (non-commercial).
 
+### Closed loop in Gazebo: does it help Nav2?
+
+![Robot progress against pedestrian crossings, with and without the World Model](docs/gz_closed_loop.png)
+
+<sub>One episode (seed 2), the same pedestrian timings in all three runs. Grey
+marks when a pedestrian is in the robot's lane at that point of the corridor.
+The LiDAR-only robot waits for them (the flat steps). With the
+`WorldModelLayer` it does not, and runs into them (×).</sub>
+
+`world_model_bringup` has a headless Gazebo Harmonic world (`wm_crossing`): a
+22 m corridor with crates and four pedestrians crossing it back and forth at
+0.5–0.8 m/s. The pedestrians do not react to the robot. The robot carries a
+camera and a 16-beam LiDAR. Everything runs on a CPU:
+
+1. **Data.** `gz_crossing.launch.py record:=DIR drive:=300` drives the robot
+   along random waypoints and records a rosbag. Four 5-minute bags were recorded.
+2. **Head.** `train_occupancy_head.py --data rosbag` trains the head on it (raw
+   pixels encoder, CPU). On the held-out bag, mean IoU is 0.59, against 0.67
+   for a privileged copy of the true current occupancy and 0.08 for the prior.
+3. **Nav2.** `gz_nav.launch.py` runs map-free Nav2: MPPI, NavFn, and rolling
+   odom-frame costmaps built from the LiDAR. `world_model:=true` adds the
+   `WorldModelLayer` to both costmaps, fed live by `runtime_node` from the
+   camera at 5 Hz. Predictions arrive 0.16 s old (median, sim time).
+4. **Episodes.** `gz_nav_eval.py` drives the robot 21 m to the end of the
+   corridor. Each seed gives the pedestrians the same start delays in every
+   condition. Contacts (robot footprint overlapping a pedestrian) come from
+   Gazebo ground truth. Physics runs at 0.3× real time so the model keeps up.
+
+| 15 seeds each | success | episodes with a contact | contacts | contact time | time to goal |
+|---|---|---|---|---|---|
+| baseline (LiDAR obstacle layer) | 15/15 | **6/15** | **7** | **6.7 s** | **49.3 s** |
+| + `WorldModelLayer` (every predicted cell `LETHAL`) | 14/15 | 14/15 | 26 | 32.7 s | 50.7 s |
+| + `WorldModelLayer` (graded `step_costs`) | 15/15 | 14/15 | 19 | 23.5 s | 53.2 s |
+
+**It does not help here. It makes things worse.** With predicted occupancy in
+the costmaps, the robot collides more often. What we found:
+
+- **The head forecasts pedestrians only weakly.** On the held-out bag it marks
+  19% of the cells pedestrians will occupy 1.5 s ahead, against 3% for the
+  current LiDAR view. That is a real gain, but most future pedestrian
+  positions are still missed.
+- **False alarms are not the problem.** Only 0.4 predicted cells per frame lie
+  0.5 m or more from any real obstacle.
+- **The robot stops waiting.** In the traces, the baseline robot stops short
+  of a crossing pedestrian's lane until the pedestrian has passed. With the
+  layer it keeps going and meets the pedestrian in the lane.
+- **The cause is not pinned down.** Grading the costs (and clearing
+  predictions within 0.5 m of the robot) cuts contacts from 26 to 19, which
+  is still far above the baseline's 7.
+
+A 2 s union of predictions stamped into a costmap loses *when* each cell will
+be occupied. A time-indexed check (trajectory point at time t against the
+grid for t) and a stronger encoder are the next things to try. Both can be
+measured on this rig.
+
+```bash
+# world + data collection (headless; CPU only)
+ros2 launch world_model_bringup gz_crossing.launch.py record:=/data/gz/run0 drive:=300 seed:=0
+python3 world_model_py/test/train_occupancy_head.py --data rosbag \
+    --bags /data/gz/run0 /data/gz/run1 /data/gz/run2 /data/gz/run3 --encoder pixels --out gz_head
+# closed loop: baseline vs + WorldModelLayer, same seeds; results + per-episode logs
+python3 $(ros2 pkg prefix world_model_bringup)/share/world_model_bringup/scripts/gz_nav_eval.py \
+    --episodes 15 --conditions baseline,wm_lethal,wm --head gz_head/occupancy_head_pixels.npz \
+    --out gz_eval.json --ros-args -p use_sim_time:=true
+```
+
+Making this loop run turned up two bugs in the `WorldModelLayer`, both fixed:
+
+- it ignored the grids' frame;
+- on a costmap finer than the grid, it marked only each cell's centre.
+
+`integration_occupancy_nav2.py` now checks the TF path too.
+
 ## Nav2 avoidance preview (predicted occupancy → detour)
 
 ![World Model predicted occupancy steers around the lethal union](docs/nav2_avoidance.gif)

@@ -47,6 +47,14 @@ local_costmap:
 | `topic` | `/world_model_runtime/future_occupancy` | FutureOccupancy source |
 | `occupied_threshold` | `50` | min occupancy to mark a cell lethal |
 | `transform_tolerance` | `0.5` | s; skip a grid whose TF is older than this |
+| `step_costs` | `[]` (all `LETHAL`) | cost per prediction step; the last entry repeats for later steps |
+| `robot_clear_radius` | `0.0` | m; never mark predictions this close to the robot |
+
+`step_costs` lets a planner trade a predicted obstacle off against other costs
+instead of treating every predicted cell as a wall. Graded, sub-inscribed costs
+such as `[220, 180, 140, 100]` are one option. The Gazebo evaluation measures
+both encodings; neither beat the LiDAR-only baseline there (see the top-level
+README).
 
 ## Verification status
 

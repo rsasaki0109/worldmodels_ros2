@@ -26,6 +26,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   - `gz_nav_eval.py`: seeded episodes, the same pedestrian timings for every
     condition, scored from Gazebo ground truth (success, time, pedestrian
     contacts, clearance, prediction latency).
+
+  Result over 15 seeds, with a pixels head trained on 20 minutes of the
+  world's own rosbags: the layer **does not help**. Pedestrian contacts happen
+  in 14/15 episodes with it, against 6/15 for the LiDAR-only baseline. The
+  README has the analysis.
+- `WorldModelLayer`: `step_costs` (graded cost per prediction step; the default
+  is unchanged, every step `LETHAL`) and `robot_clear_radius`.
 - `runtime_node`: `occupancy_frame` (stamp the grids with the head's base frame)
   and `queue_depth` (`1` = always predict from the freshest frame).
 - `bag_relay`: `min_period` (match the frame spacing a head was trained at) and
