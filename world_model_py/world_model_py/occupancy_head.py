@@ -319,7 +319,8 @@ class OccupancyHead:
         else:
             _, _, vt = np.linalg.svd(x - mu, full_matrices=False)
             comp = vt[:channels].T.astype(np.float32)
-        std = ((x - mu) @ comp).std(0) + 1e-6
+        # floor the scale: a (near-)constant channel must not blow up when standardised
+        std = np.maximum(((x - mu) @ comp).std(0), 1e-3)
         return mu, comp, std.astype(np.float32)
 
     @classmethod

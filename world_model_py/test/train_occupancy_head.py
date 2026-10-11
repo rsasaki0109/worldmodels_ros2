@@ -179,6 +179,96 @@ class NuScenesSource:
         return {**lab, "frames": self.frames(name, sc)}
 
 
+class RosbagSource:
+    """Camera + LiDAR rosbags (ROS 1 ``.bag`` or rosbag2): labels from future LiDAR
+    scans (``world_model_py.rosbag_occ``). Each bag is cut into ``--segment-s``
+    episodes; with >= 4 bags, whole bags are held out for val / test so the same
+    place never appears on both sides of the split."""
+
+    def __init__(self, args):
+        import glob
+        from world_model_py.occupancy_labels import BevGrid
+        from world_model_py.rosbag_occ import BagOccupancy
+
+        self.args = args
+        paths = []
+        for b in args.bags:
+            paths += sorted(glob.glob(os.path.join(b, "*.bag"))) if os.path.isdir(b) and not \
+                os.path.exists(os.path.join(b, "metadata.yaml")) else [b]
+        if not paths:
+            raise SystemExit("--data rosbag needs --bags <file.bag | rosbag2 dir | dir of .bag> ...")
+        n, res = args.grid_cells, args.grid_res
+        self.grid = BevGrid(n, n, res, (0.0, -n * res / 2.0))
+        self.resolution, self.origin, self.dt = res, self.grid.origin, 0.5
+        self.horizon = min(args.horizon, 4)
+        self.heights, self.dilations = (0.0, 0.5, 1.0), (1, 2, 4)
+        self.bags = [BagOccupancy(p, self.grid, horizon=self.horizon, dt=self.dt,
+                                  image_width=args.image_width, image_topic=args.image_topic,
+                                  camera_info_topic=args.camera_info_topic,
+                                  lidar_topic=args.lidar_topic, odom_topic=args.odom_topic,
+                                  camera_stride=args.camera_stride, log=log) for p in paths]
+        self.camera = self.bags[0].camera
+        for b in self.bags[1:]:
+            if not np.allclose(b.camera.P, self.camera.P, rtol=0.05, atol=2.0):
+                log(f"  WARNING: {b.name} camera differs from {self.bags[0].name}; "
+                    "the head stores one camera model")
+        # episodes: (bag index, segment) over the valid frames
+        self.segments = {}
+        for bi, b in enumerate(self.bags):
+            vi = b.valid_indices()
+            if len(vi) == 0:
+                continue
+            seg = ((b.times[vi] - b.times[vi[0]]) // int(args.segment_s * 1e9)).astype(int)
+            for k in np.unique(seg):
+                self.segments[f"{b.name}#{k:03d}"] = (bi, vi[seg == k])
+        keys = sorted(self.segments)
+        if len(self.bags) >= 4:
+            names = sorted({b.name for b in self.bags})
+            role = {n: ("test" if i % 4 == 0 else "val" if i % 4 == 2 else "train")
+                    for i, n in enumerate(names)}
+            pick = lambda r: [k for k in keys if role[k.split("#")[0]] == r]
+        else:
+            pick = lambda r: [k for i, k in enumerate(keys)
+                              if (r == "test") == (i % 8 == 0) and (r == "val") == (i % 8 == 4)]
+        self.splits = {r: pick(r) for r in ("train", "val", "test")}
+        self.cache = args.cache or os.path.join(args.out, "rosbag_cache")
+        os.makedirs(self.cache, exist_ok=True)
+
+    def describe(self) -> str:
+        g = self.grid
+        return (f"rosbag x{len(self.bags)} image={self.args.image_width}px "
+                f"grid={g.rows}x{g.cols}@{g.resolution}m dt={self.dt}s horizon={self.horizon} "
+                f"episodes train/val/test={[len(v) for v in self.splits.values()]}")
+
+    def labels(self, key) -> dict:
+        g = self.grid
+        path = os.path.join(self.cache, f"{key.replace('#', '_')}_g{g.rows}r{g.resolution}"
+                                        f"_h{self.horizon}.npz")
+        if os.path.exists(path):
+            with np.load(path) as z:
+                return {k: z[k] for k in z.files}
+        bi, idx = self.segments[key]
+        b = self.bags[bi]
+        lab = {"ts": idx,
+               "ego": np.stack([b.ego_command(i) for i in idx]),
+               "target": np.stack([b.future_occupancy(i) for i in idx]),
+               "mask": np.stack([b.visibility(i) for i in idx]),
+               "current": np.stack([b.occupancy_at(i, 0.0) for i in idx]),
+               "static": np.stack([b.static_occupancy(i) for i in idx])}
+        np.savez_compressed(path, **lab)
+        return lab
+
+    def episode(self, key) -> dict:
+        bi, _ = self.segments[key]
+        lab = self.labels(key)
+        lo = int(lab["ts"].min()) - 1
+        frames = np.stack(self.bags[bi].frames[lo: int(lab["ts"].max()) + 1])
+        return {**lab, "ts": lab["ts"] - lo, "frames": frames}
+
+    def frames(self, key):
+        return self.episode(key)["frames"]
+
+
 def build_split(source, keys, encoders, pcas, batch, keep_frames=0):
     """Encode a split. Per encoder: reduced maps for t and t-1 (float16);
     shared: ego command, future targets, visibility and current occupancy."""
@@ -265,7 +355,17 @@ def predict(head, d, name, batch=16):
 
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
-    ap.add_argument("--data", default="sim", choices=["sim", "nuscenes"])
+    ap.add_argument("--data", default="sim", choices=["sim", "nuscenes", "rosbag"])
+    ap.add_argument("--bags", nargs="*", default=[],
+                    help="rosbag: .bag files, rosbag2 dirs, or dirs of .bag files")
+    ap.add_argument("--image-topic", default="")
+    ap.add_argument("--camera-info-topic", default="")
+    ap.add_argument("--lidar-topic", default="")
+    ap.add_argument("--odom-topic", default="")
+    ap.add_argument("--camera-stride", type=int, default=2, help="rosbag: keep every Nth frame")
+    ap.add_argument("--segment-s", type=float, default=20.0, help="rosbag: episode length")
+    ap.add_argument("--grid-cells", type=int, default=48, help="rosbag: BEV cells per side")
+    ap.add_argument("--grid-res", type=float, default=0.25, help="rosbag: metres per cell")
     ap.add_argument("--nuscenes-root", default=os.environ.get("NUSCENES_ROOT", ""))
     ap.add_argument("--nuscenes-version", default="v1.0-mini")
     ap.add_argument("--image-width", type=int, default=448, help="nuScenes frames are resized")
@@ -294,11 +394,11 @@ def main() -> int:
     os.makedirs(args.out, exist_ok=True)
     if args.data == "nuscenes" and not args.nuscenes_root:
         raise SystemExit("--data nuscenes needs --nuscenes-root (or NUSCENES_ROOT)")
-    source = NuScenesSource(args) if args.data == "nuscenes" else SimSource(args)
+    source = {"nuscenes": NuScenesSource, "rosbag": RosbagSource}.get(args.data, SimSource)(args)
     args.horizon = source.horizon
     if args.labels_only:
-        if args.data != "nuscenes":
-            raise SystemExit("--labels-only is for --data nuscenes")
+        if args.data == "sim":
+            raise SystemExit("--labels-only is for --data nuscenes | rosbag")
         keys = [k for v in source.splits.values() for k in v]
         log(f"[labels] {source.describe()}")
         for e, key in enumerate(keys):
@@ -318,6 +418,8 @@ def main() -> int:
     # channel PCA from a few training episodes (keeps ~1000-d token maps small)
     pcas = {}
     pca_keys = source.splits["train"][:5 if args.data == "sim" else 2]
+    if not all(source.splits.values()):
+        raise SystemExit(f"empty split: {source.describe()} -- need more data")
     for k, enc in encoders.items():
         sample = np.concatenate([encode(enc, source.frames(key), args.batch) for key in pca_keys])
         pcas[k] = OccupancyHead.fit_channel_pca(sample, channels=args.channels)
