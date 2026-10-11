@@ -25,7 +25,8 @@ jobs:
           test/test_adapters.py test/test_jepa.py test/test_bench.py
           test/test_metrics.py test/test_anomaly.py test/test_registry.py
           test/test_wire.py test/test_remote_server.py test/test_planning.py
-          test/test_play.py test/test_dynamics.py test/test_decoder.py -q
+          test/test_play.py test/test_dynamics.py test/test_decoder.py
+          test/test_occupancy.py test/test_occupancy_labels.py -q
 
   # Full ROS 2 Jazzy build + colcon test inside the official container.
   colcon:
@@ -40,8 +41,9 @@ jobs:
           apt-get update
           # ffmpeg via apt; pyarrow has no noble apt package so install via pip.
           # Both are skipped in rosdep (not resolvable rosdep keys).
+          # pyarrow>=26 needs NumPy 2, but noble's python3-numpy is 1.26.
           apt-get install -y ffmpeg python3-pip
-          pip install --break-system-packages pyarrow
+          pip install --break-system-packages "pyarrow<26"
           rosdep update
           rosdep install --from-paths . --ignore-src -y \
             --skip-keys "python3-pyarrow ffmpeg"

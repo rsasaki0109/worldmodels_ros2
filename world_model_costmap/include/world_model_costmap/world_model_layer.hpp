@@ -47,6 +47,12 @@ private:
   std::string topic_;
   int occupied_threshold_{50};
   bool rolling_window_{false};
+
+  // World-frame extent of the cells marked last cycle. The master costmap is
+  // only reset inside the bounds layers report, so these are re-reported once
+  // to clear predictions that moved away or vanished.
+  bool has_last_bounds_{false};
+  double last_min_x_{0.0}, last_min_y_{0.0}, last_max_x_{0.0}, last_max_y_{0.0};
 };
 
 }  // namespace world_model_costmap

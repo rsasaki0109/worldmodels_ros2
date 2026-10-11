@@ -4,6 +4,45 @@ All notable changes to this project are documented in this file. The format is
 based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/), and this
 project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## [Unreleased]
+
+### Added
+- **Occupancy head** (`world_model_py.occupancy_head.OccupancyHead`): the
+  encoder's patch-token map is lifted into BEV through the camera geometry and fed
+  to a small BEV CNN, which predicts `FutureOccupancy`. Training uses torch;
+  inference is pure numpy (one `.npz`). Attach it with
+  `runtime_node -p occupancy_head:=...` (`ijepa` / `vjepa2`). Cells outside the
+  camera's view are published as -1 (unknown).
+- **`CameraModel`**: base-frame pinhole projection, built from config or from
+  `CameraInfo` + TF.
+- **`occupancy_sim`**: a seeded camera + exact future occupancy simulator with
+  camera-visibility masks, used to bootstrap training data.
+- **`test/train_occupancy_head.py`** and the Colab notebook
+  **`notebooks/train_occupancy_head.ipynb`**: train and score (visible-cell
+  pooled IoU) against `prior` / `persist-gt` / `pixels` baselines.
+- **Real-data labels**: `occupancy_labels` (static LiDAR map with robust local
+  ground, box footprints, LiDAR-ray x camera-FOV visibility) and `nuscenes_occ`
+  (a devkit-free nuScenes reader) make `CAM_FRONT` training samples with future
+  occupancy; the train script and notebook take `--data nuscenes`.
+- Encoders expose `embed_with_map` (patch tokens). The latent stays the token
+  mean, so existing behaviour is unchanged.
+
+- **ROS 2 + Nav2 integration check** (`test/integration_occupancy_nav2.py`):
+  real frames go through `runtime_node` (I-JEPA + trained head) into a live
+  `nav2_costmap_2d` with `WorldModelLayer`. The check requires the grids to
+  match the offline head and the costmap to equal their union.
+
+### Fixed
+- `world_model_costmap::WorldModelLayer` left previously predicted obstacles
+  `LETHAL` after the prediction moved or vanished. The master costmap resets
+  only inside the bounds each layer reports, and the layer reported only this
+  cycle's cells. It now re-reports last cycle's marked extent.
+
+### Changed
+- `FuturePrediction` carries `occupancy_resolution` / `occupancy_origin`, the
+  wire format sends them (with defaults kept for old servers), and
+  `occupancy_to_grids` writes them into `OccupancyGrid.info`.
+
 ## [0.7.1] - 2026-06-08
 
 LeRobot loader validation and a compiled Nav2 DWB critic plugin.

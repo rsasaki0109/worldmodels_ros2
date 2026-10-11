@@ -1,6 +1,7 @@
 #include "world_model_costmap/world_model_layer.hpp"
 
 #include <algorithm>
+#include <limits>
 
 #include "pluginlib/class_list_macros.hpp"
 
@@ -74,6 +75,14 @@ void WorldModelLayer::updateBounds(
   // clear our buffer each cycle so stale predictions do not linger
   resetMap(0, 0, getSizeInCellsX(), getSizeInCellsY());
 
+  // ...and make the master reset (and so clear) what we marked last cycle:
+  // it only resets inside reported bounds.
+  if (has_last_bounds_) {
+    touch(last_min_x_, last_min_y_, min_x, min_y, max_x, max_y);
+    touch(last_max_x_, last_max_y_, min_x, min_y, max_x, max_y);
+    has_last_bounds_ = false;
+  }
+
   world_model_msgs::msg::FutureOccupancy::SharedPtr msg;
   {
     std::lock_guard<std::mutex> lock(mutex_);
@@ -82,6 +91,11 @@ void WorldModelLayer::updateBounds(
   if (!msg) {
     return;
   }
+
+  double mark_min_x = std::numeric_limits<double>::max();
+  double mark_min_y = std::numeric_limits<double>::max();
+  double mark_max_x = std::numeric_limits<double>::lowest();
+  double mark_max_y = std::numeric_limits<double>::lowest();
 
   // Union of predicted occupancy over the whole horizon.
   for (const auto & grid : msg->grids) {
@@ -102,9 +116,18 @@ void WorldModelLayer::updateBounds(
         if (worldToMap(wx, wy, mx, my)) {
           setCost(mx, my, LETHAL_OBSTACLE);
           touch(wx, wy, min_x, min_y, max_x, max_y);
+          touch(wx, wy, &mark_min_x, &mark_min_y, &mark_max_x, &mark_max_y);
         }
       }
     }
+  }
+
+  if (mark_min_x <= mark_max_x) {
+    has_last_bounds_ = true;
+    last_min_x_ = mark_min_x;
+    last_min_y_ = mark_min_y;
+    last_max_x_ = mark_max_x;
+    last_max_y_ = mark_max_y;
   }
 }
 

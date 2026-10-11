@@ -598,6 +598,126 @@ unit-tested. This follows recent World-Model failure/OOD-monitoring work, e.g.
 [failure detection without failure data](https://arxiv.org/html/2503.08558v1),
 and [foundation world models detecting manipulation failures](https://arxiv.org/pdf/2603.06987).
 
+## Future occupancy from a real encoder (JEPA → Nav2)
+
+JEPA encoders output latents, but the Nav2 costmap layer and DWB critic consume
+`FutureOccupancy`. A trained **occupancy head** bridges the two: attach it to
+`ijepa` / `vjepa2` and the runtime publishes predicted occupancy for the next
+`horizon` steps.
+
+```bash
+ros2 run world_model_py runtime_node --ros-args \
+    -p adapter:=ijepa -p occupancy_head:=occupancy_head_ijepa.npz
+#   ~/future_occupancy  (cells outside the camera's view are -1 = unknown)
+```
+
+How it works (`world_model_py/occupancy_head.py`):
+
+- **Camera-geometry lift.** Every BEV cell is projected into the camera
+  (a short pillar of heights above the ground), and the encoder's **patch-token
+  map** is sampled there. The geometry is a `CameraModel` (base-frame 3×4
+  projection); a real robot builds it from `CameraInfo` + TF.
+- **Small BEV CNN.** It combines the lifted features of the current frame, the
+  change since the previous frame, and the last ego command, then outputs per-step
+  occupancy logits.
+- **Training uses torch on a GPU; inference is pure numpy.** The head is a single
+  `.npz` (< 1 MB), so the ROS runtime and CI need no torch. Its stored decision
+  threshold maps to occupancy 50, matching the costmap's `occupied_threshold`.
+
+Training data is bootstrapped from a seeded simulator (`occupancy_sim`). It
+renders camera frames and computes the exact future occupancy plus an
+Occ3D-style **camera-visibility mask**. Loss and scores count only cells
+visible at the observation time. Train on Colab (free T4 is enough) with
+[`notebooks/train_occupancy_head.ipynb`](notebooks/train_occupancy_head.ipynb),
+or locally:
+
+```bash
+python3 world_model_py/test/train_occupancy_head.py --encoder pixels   # CPU, ~10 min
+WM_DEVICE=cuda python3 world_model_py/test/train_occupancy_head.py --encoder ijepa
+```
+
+Held-out pooled IoU (visible cells, 16×16 grid @ 0.5 m, dt 0.2 s), GPU-free
+`pixels` encoder:
+
+| method | t+1 | t+4 | t+8 | mean |
+|---|---|---|---|---|
+| `prior` (no image) | 0.06 | 0.06 | 0.05 | 0.05 |
+| **head on pixels** | **0.65** | **0.41** | **0.18** | **0.39** |
+| `persist-gt` (privileged: true current occupancy held) | 0.87 | 0.55 | 0.30 | 0.54 |
+
+Honest scope: these numbers come from a synthetic world. They validate the
+pipeline and the head design, not real-world accuracy. Measured design notes: a head on the
+mean-pooled latent, or a dense image→grid MLP, overfits and stays near IoU 0.1.
+The fixed geometric lift is what makes the head generalise. At 0.25 m cells the
+camera's depth resolution beyond ~4 m (< 1.5 px per cell) caps any method.
+
+### Real data: nuScenes labels from LiDAR + boxes
+
+`--data nuscenes` trains on real `CAM_FRONT` frames (~12 Hz). The labels are
+built from the dataset's own LiDAR and 3D boxes by `world_model_py.occupancy_labels`
+(dataset-agnostic, so the same code serves a camera + LiDAR rosbag) and
+`world_model_py.nuscenes_occ` (a devkit-free nuScenes reader):
+
+- **static structure**: LiDAR returns 0.3–2.5 m above a local ground estimate,
+  accumulated over the scene in the world frame. Points inside annotated boxes
+  are removed, and a voxel must be hit in ≥ 6 scans, so movers don't smear;
+- **agents**: annotated boxes interpolated to `t + k·dt` and rasterised as
+  oriented footprints;
+- **visibility**: cells a LiDAR ray reached at `t`, within the camera's view
+  (the Occ3D `mask_camera` idea).
+
+```bash
+# nuScenes v1.0-mini (public, ~4 GB; register + accept the terms at nuscenes.org)
+python3 world_model_py/test/train_occupancy_head.py --data nuscenes \
+    --nuscenes-root /data/nuscenes --encoder pixels        # or ijepa on a GPU
+```
+
+The setup is a 48×48 grid at 0.5 m (24 m ahead, ±12 m), 4 steps of 0.5 s
+(2 s), and dilated BEV convolutions, because cars move up to ~20 m in 2 s.
+
+**Results on `v1.0-trainval` blob 01** (85 scenes; scene split 63 / 11 / 11;
+12.9 k training frames; I-JEPA encoding + training on a Colab T4 via the Colab
+CLI). Held-out pooled IoU on visible cells:
+
+| method | t+0.5 s | t+1 s | t+2 s | mean | **agents only** (mean) |
+|---|---|---|---|---|---|
+| `prior` | 0.18 | 0.19 | 0.19 | 0.19 | 0.06 |
+| head on `pixels` | 0.29 | 0.29 | 0.28 | 0.29 | 0.12 |
+| **head on `ijepa`** (ViT-H/14 patch tokens) | **0.32** | **0.31** | **0.31** | **0.31** | **0.15** |
+| `persist-gt` (privileged: true current occupancy held) | 0.92 | 0.88 | 0.87 | 0.88 | 0.67 |
+
+*Agents only* removes static structure from both prediction and target, so
+only movers and annotated objects count. Going from 7 scenes (`v1.0-mini`:
+ijepa 0.23, pixels 0.21) to 63 scenes improves both heads, and I-JEPA leads
+throughout: +10 % overall and +28 % on agents. Heads now localise large
+parked or stopped vehicles. There is still a wide gap to `persist-gt`, which
+reads the labels: monocular range to small or distant agents is the limit at
+this data scale.
+
+**End-to-end in ROS 2 + Nav2.** `test/integration_occupancy_nav2.py` checks
+the whole path on real nuScenes frames. It runs `runtime_node` with
+`adapter:=ijepa` and the trained head, feeding a standalone `nav2_costmap_2d`
+whose only plugin is `world_model_costmap::WorldModelLayer`. For every frame it
+checks:
+
+- `FutureOccupancy` has the head's horizon, resolution and origin, with `-1`
+  outside the camera's view;
+- the grids are identical to the head run offline in numpy;
+- the costmap's lethal cells equal the union of the predicted grids.
+
+All 5 frames pass on Jazzy. This check found and fixed a layer bug: obstacles
+from a previous prediction stayed lethal after the prediction moved.
+
+```bash
+source install/setup.bash
+python3 world_model_py/test/integration_occupancy_nav2.py \
+    --head occupancy_head_ijepa.npz --nuscenes-root /data/nuscenes --frames 5
+```
+
+Build the labels anywhere with a CPU (`--labels-only`, ~7 s per scene), then
+encode and train on a GPU. The heads trained on nuScenes data fall under the
+nuScenes terms of use (non-commercial).
+
 ## Nav2 avoidance preview (predicted occupancy → detour)
 
 ![World Model predicted occupancy steers around the lethal union](docs/nav2_avoidance.gif)

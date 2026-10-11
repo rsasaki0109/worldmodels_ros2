@@ -57,6 +57,8 @@ class FuturePrediction:
     latents: list[np.ndarray] = field(default_factory=list)
     frames: list[np.ndarray] = field(default_factory=list)      # list of (H,W,3) uint8
     occupancy: list[np.ndarray] = field(default_factory=list)   # list of (H,W) int8 [-1,100]
+    occupancy_resolution: float = 0.1                           # metres per cell
+    occupancy_origin: tuple = (0.0, 0.0)                        # (x, y) of cell [0, 0]'s corner
     risk: float = 0.0
     risk_confidence: float = 1.0
     risk_label: str = ""

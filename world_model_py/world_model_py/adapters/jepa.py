@@ -16,6 +16,10 @@ torch/transformers, so:
 This is an *encoder*, not a dynamics model: ``predict_future`` returns a
 persistence rollout (latent held constant over the horizon). Action-conditioned
 prediction arrives with V-JEPA2-AC; the contract does not change.
+
+Attach a trained :class:`world_model_py.occupancy_head.OccupancyHead`
+(``occupancy_head=path.npz``) and the adapter also predicts ``FutureOccupancy``
+from the latent, so a real encoder can drive the Nav2 costmap layer / critic.
 """
 from __future__ import annotations
 
@@ -23,6 +27,7 @@ from typing import Optional, Protocol
 
 import numpy as np
 
+from ..occupancy_head import load_head
 from .base import (
     ActionCondition,
     FuturePrediction,
@@ -33,11 +38,27 @@ from .base import (
 
 
 class FrameEncoder(Protocol):
-    """Minimal interface the adapter needs from any image encoder."""
+    """Minimal interface the adapter needs from any image encoder.
+
+    Encoders that can drive an occupancy head also implement
+    ``embed_with_map(image) -> (latent (D,), feature_map (Hf, Wf, C))`` -- the
+    spatial patch tokens the latent is pooled from -- in one forward pass."""
 
     def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray: ...
 
     def info(self) -> dict: ...
+
+
+def _token_grid(tokens: np.ndarray) -> np.ndarray:
+    """(T, C) patch tokens -> (s, s, C); drops a leading CLS token if present."""
+    t = tokens.shape[0]
+    s = int(round(np.sqrt(t)))
+    if s * s != t:
+        s = int(round(np.sqrt(t - 1)))
+        if s * s != t - 1:
+            raise ValueError(f"cannot arrange {t} tokens into a square grid")
+        tokens = tokens[1:]
+    return tokens.reshape(s, s, -1)
 
 
 class IJepaAdapter(WorldModelAdapter):
@@ -45,11 +66,15 @@ class IJepaAdapter(WorldModelAdapter):
 
     name = "ijepa"
 
-    def __init__(self, encoder: FrameEncoder, dt: float = 0.1, name: str = "ijepa"):
+    def __init__(self, encoder: FrameEncoder, dt: float = 0.1, name: str = "ijepa",
+                 occupancy_head=None):
         self._enc = encoder
-        self.dt = float(dt)
         self.name = name
         self._prev: Optional[np.ndarray] = None
+        self._prev_map: Optional[np.ndarray] = None
+        self._head = load_head(occupancy_head)
+        # the head was trained at a fixed step; its dt is the truth for the rollout
+        self.dt = float(self._head.dt) if self._head is not None else float(dt)
 
     def _latent(self, obs: Observation) -> np.ndarray:
         if obs.image is None or getattr(obs.image, "size", 0) == 0:
@@ -81,21 +106,46 @@ class IJepaAdapter(WorldModelAdapter):
             horizon = action.horizon
         horizon = max(1, int(horizon))
 
-        latent = self._latent(obs)
+        fmap = None
+        if self._head is not None:
+            if obs.image is None or getattr(obs.image, "size", 0) == 0:
+                raise ValueError("ijepa adapter requires obs.image (a camera frame)")
+            if not hasattr(self._enc, "embed_with_map"):
+                raise TypeError("occupancy_head needs an encoder with embed_with_map()")
+            latent, fmap = self._enc.embed_with_map(obs.image)
+            latent = np.asarray(latent, dtype=np.float32).ravel()
+        else:
+            latent = self._latent(obs)
         score, confidence = self._surprise(latent)
-        return FuturePrediction(
+        pred = FuturePrediction(
             dt=self.dt,
             latents=[latent.copy() for _ in range(horizon)],   # persistence rollout
             risk=score,
             risk_confidence=confidence,
             risk_label=f"{self.name}-surprise",
         )
+        if self._head is not None:
+            ego = None
+            if obs.action_history is not None and np.size(obs.action_history):
+                ego = np.atleast_2d(np.asarray(obs.action_history, np.float32))[-1]
+            # the head predicts a fixed horizon; never extrapolate past it
+            pred.occupancy = self._head.predict_grids(fmap, self._prev_map, ego)[:horizon]
+            self._prev_map = fmap
+            pred.occupancy_resolution = self._head.resolution
+            pred.occupancy_origin = self._head.origin
+        return pred
 
     def reset(self) -> None:
         self._prev = None
+        self._prev_map = None
 
     def info(self) -> dict:
         d = {"name": self.name, "remote": False, "kind": "jepa-encoder"}
+        if self._head is not None:
+            d["occupancy_head"] = {"horizon": self._head.horizon,
+                                   "grid": list(self._head.grid_shape),
+                                   "resolution": self._head.resolution,
+                                   "dt": self._head.dt}
         try:
             d.update(self._enc.info())
         except Exception:  # noqa: BLE001
@@ -170,15 +220,29 @@ class _HFEncoder:
         chw = np.transpose(arr, (2, 0, 1))[None]  # (1,3,H,W)
         return torch.from_numpy(chw).to(self.device, self._dtype)
 
-    def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
-        torch = self._torch
-        pixel_values = self._to_pixel_values(image_hwc_uint8)
-        with torch.no_grad():
+    def _tokens(self, pixel_values):
+        with self._torch.no_grad():
             out = self.model(pixel_values=pixel_values)
-        hidden = out.last_hidden_state  # (1, tokens, dim)
-        latent = hidden.mean(dim=1).squeeze(0).float().cpu().numpy()
+        return out.last_hidden_state.float().cpu().numpy()      # (N, tokens, dim)
+
+    def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
+        tokens = self._tokens(self._to_pixel_values(image_hwc_uint8))[0]
+        latent = tokens.mean(axis=0)
         self._latent_dim = int(latent.shape[-1])
         return latent.astype(np.float32)
+
+    def embed_with_map(self, image_hwc_uint8: np.ndarray):
+        """(latent (D,), patch-token map (s, s, D)) from one forward pass. The
+        latent is the token mean, identical to :meth:`embed`."""
+        tokens = self._tokens(self._to_pixel_values(image_hwc_uint8))[0]
+        self._latent_dim = int(tokens.shape[-1])
+        return tokens.mean(axis=0).astype(np.float32), _token_grid(tokens).astype(np.float32)
+
+    def embed_map_batch(self, images) -> np.ndarray:
+        """Patch-token maps for a list of frames in one forward pass -> (N, s, s, D)."""
+        pv = self._torch.cat([self._to_pixel_values(im) for im in images], dim=0)
+        tokens = self._tokens(pv)
+        return np.stack([_token_grid(t) for t in tokens]).astype(np.float32)
 
     def info(self) -> dict:
         return {
@@ -190,15 +254,52 @@ class _HFEncoder:
         }
 
 
+class PixelEncoder:
+    """GPU-free baseline FrameEncoder: the downsampled image itself is the
+    feature map (and its flattening the latent). Used to check whether a learned
+    encoder actually helps a head, and to exercise the training pipeline with no
+    model download."""
+
+    def __init__(self, size: int = 32):
+        self.size = int(size)
+
+    def embed_map(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
+        """Area-average pool to (size, size, 3), scaled to [0, 1]."""
+        img = np.asarray(image_hwc_uint8, np.float32)
+        if img.ndim == 2:
+            img = np.repeat(img[:, :, None], 3, axis=2)
+        h, w = img.shape[:2]
+        ys = (np.arange(self.size + 1) * h) // self.size
+        xs = (np.arange(self.size + 1) * w) // self.size
+        rows = np.add.reduceat(img[:, :, :3], ys[:-1], axis=0) / np.diff(ys)[:, None, None]
+        pooled = np.add.reduceat(rows, xs[:-1], axis=1) / np.diff(xs)[None, :, None]
+        return (pooled / 255.0).astype(np.float32)
+
+    def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
+        return self.embed_map(image_hwc_uint8).ravel()
+
+    def embed_with_map(self, image_hwc_uint8: np.ndarray):
+        m = self.embed_map(image_hwc_uint8)
+        return m.ravel(), m
+
+    def embed_map_batch(self, images) -> np.ndarray:
+        return np.stack([self.embed_map(im) for im in images])
+
+    def info(self) -> dict:
+        return {"encoder": "pixels", "size": self.size, "latent_dim": self.size * self.size * 3}
+
+
 def make_ijepa_adapter(**kwargs) -> IJepaAdapter:
     """Registry factory: build an I-JEPA adapter backed by a real HF encoder.
 
-    Accepts encoder kwargs (model_id, device, dtype, image_size). Importing the
-    encoder (and thus torch/transformers) happens only when this is called.
+    Accepts encoder kwargs (model_id, device, dtype, image_size) plus
+    ``occupancy_head`` (a trained head ``.npz`` path). Importing the encoder
+    (and thus torch/transformers) happens only when this is called.
     """
     adapter_dt = kwargs.pop("dt", 0.1)
+    head = kwargs.pop("occupancy_head", None)
     encoder = _HFEncoder(**kwargs)
-    return IJepaAdapter(encoder, dt=adapter_dt)
+    return IJepaAdapter(encoder, dt=adapter_dt, occupancy_head=head)
 
 
 class _VJepa2Encoder:
@@ -255,7 +356,7 @@ class _VJepa2Encoder:
         arr = (arr - np.array(self._MEAN, np.float32)) / np.array(self._STD, np.float32)
         return np.transpose(arr, (2, 0, 1))  # (3, H, W)
 
-    def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
+    def _clip_tokens(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
         torch = self._torch
         self._buffer.append(self._prep(image_hwc_uint8))
         frames = list(self._buffer)
@@ -265,9 +366,19 @@ class _VJepa2Encoder:
         x = torch.from_numpy(clip[None]).to(self.device, self._dtype)  # (1, 3, T, H, W)
         with torch.no_grad():
             out = self.encoder(x)                    # (1, num_tokens, dim)
-        latent = out.mean(dim=1).squeeze(0).float().cpu().numpy()
-        self._latent_dim = int(latent.shape[-1])
-        return latent.astype(np.float32)
+        tokens = out.squeeze(0).float().cpu().numpy()
+        self._latent_dim = int(tokens.shape[-1])
+        return tokens
+
+    def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
+        return self._clip_tokens(image_hwc_uint8).mean(axis=0).astype(np.float32)
+
+    def embed_with_map(self, image_hwc_uint8: np.ndarray):
+        """(clip latent, spatial map of the *latest* tubelet (s, s, D))."""
+        tokens = self._clip_tokens(image_hwc_uint8)
+        s = self.img_size // 16                      # patch size 16
+        grid = tokens.reshape(-1, s, s, tokens.shape[-1])[-1]
+        return tokens.mean(axis=0).astype(np.float32), grid.astype(np.float32)
 
     def info(self) -> dict:
         return {
@@ -283,5 +394,6 @@ def make_vjepa2_adapter(**kwargs) -> IJepaAdapter:
     """Registry factory: a V-JEPA 2 video adapter (camera clip -> latent ->
     surprise). Imports torch / torch.hub only when called."""
     adapter_dt = kwargs.pop("dt", 0.1)
+    head = kwargs.pop("occupancy_head", None)
     encoder = _VJepa2Encoder(**kwargs)
-    return IJepaAdapter(encoder, dt=adapter_dt, name="vjepa2")
+    return IJepaAdapter(encoder, dt=adapter_dt, name="vjepa2", occupancy_head=head)
