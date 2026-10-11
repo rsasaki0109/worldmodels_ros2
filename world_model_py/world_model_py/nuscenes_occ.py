@@ -33,9 +33,14 @@ Z_BAND = (0.3, 2.5)
 
 
 class NuScenesTables:
-    """Just the JSON tables, indexed by token."""
+    """Just the JSON tables we need, indexed once.
 
-    def __init__(self, root: str, version: str = "v1.0-mini"):
+    ``v1.0-trainval`` metadata is large (millions of ``sample_data`` / ``ego_pose``
+    rows), so only the requested channels are kept, and only scenes whose files
+    are present on disk are reported (e.g. one of the ten trainval blobs)."""
+
+    def __init__(self, root: str, version: str = "v1.0-mini",
+                 channels=("CAM_FRONT", "LIDAR_TOP")):
         self.root = root
         self.version = version
 
@@ -45,24 +50,49 @@ class NuScenesTables:
 
         self.scene = load("scene")
         self.sample = {r["token"]: r for r in load("sample")}
-        self.sample_data = load("sample_data")
-        self.ego_pose = {r["token"]: r for r in load("ego_pose")}
         self.calib = {r["token"]: r for r in load("calibrated_sensor")}
         sensors = {r["token"]: r["channel"] for r in load("sensor")}
         self.channel_of = {t: sensors[c["sensor_token"]] for t, c in self.calib.items()}
-        self.annotations = load("sample_annotation")
+        keep = {t for t, ch in self.channel_of.items() if ch in channels}
 
-    def scene_names(self) -> list:
-        return [s["name"] for s in sorted(self.scene, key=lambda s: s["name"])]
+        # scene token -> channel -> [sample_data], built in one pass
+        self.by_scene = defaultdict(lambda: defaultdict(list))
+        poses = set()
+        for d in load("sample_data"):
+            if d["calibrated_sensor_token"] in keep:
+                scene_tok = self.sample[d["sample_token"]]["scene_token"]
+                self.by_scene[scene_tok][self.channel_of[d["calibrated_sensor_token"]]].append(d)
+                poses.add(d["ego_pose_token"])
+        self.ego_pose = {r["token"]: r for r in load("ego_pose") if r["token"] in poses}
+
+        self.ann_by_scene = defaultdict(list)
+        for a in load("sample_annotation"):
+            self.ann_by_scene[self.sample[a["sample_token"]]["scene_token"]].append(a)
+
+    def scene_names(self, available_only: bool = True, channel: str = "CAM_FRONT") -> list:
+        """Scene names, sorted; by default only scenes whose first ``channel``
+        file exists under ``root``."""
+        out = []
+        for s in sorted(self.scene, key=lambda s: s["name"]):
+            sds = self.by_scene[s["token"]][channel]
+            if not sds:
+                continue
+            if available_only and not os.path.exists(os.path.join(self.root, sds[0]["filename"])):
+                continue
+            out.append(s["name"])
+        return out
 
 
 class SceneOccupancy:
-    """Samples of one nuScenes scene. Indices refer to ``CAM_FRONT`` frames."""
+    """Samples of one nuScenes scene. Indices refer to ``CAM_FRONT`` frames.
+
+    Works with the full sensor set or with LiDAR *keyframes* only (``sweeps/
+    LIDAR_TOP`` not downloaded): scans whose files are missing are skipped, and
+    the static map then needs fewer repeated hits (2 Hz instead of 20 Hz)."""
 
     def __init__(self, tables: NuScenesTables, scene_name: str, grid: BevGrid,
                  horizon: int = 4, dt: float = 0.5, image_width: int = 448,
-                 camera: str = "CAM_FRONT", lidar: str = "LIDAR_TOP",
-                 static_stride: int = 2):
+                 camera: str = "CAM_FRONT", lidar: str = "LIDAR_TOP"):
         self.t = tables
         self.grid = grid
         self.horizon = int(horizon)
@@ -70,19 +100,26 @@ class SceneOccupancy:
         self.image_width = int(image_width)
         scene = next(s for s in tables.scene if s["name"] == scene_name)
         self.name = scene_name
-        samples = {tok for tok, s in tables.sample.items() if s["scene_token"] == scene["token"]}
-
-        by_chan = defaultdict(list)
-        for d in tables.sample_data:
-            if d["sample_token"] in samples:
-                by_chan[tables.channel_of[d["calibrated_sensor_token"]]].append(d)
-        self.cams = sorted(by_chan[camera], key=lambda d: d["timestamp"])
-        self.lidars = sorted(by_chan[lidar], key=lambda d: d["timestamp"])
+        root = tables.root
+        chans = tables.by_scene[scene["token"]]
+        exists = lambda d: os.path.exists(os.path.join(root, d["filename"]))
+        self.cams = sorted(filter(exists, chans[camera]), key=lambda d: d["timestamp"])
+        self.lidars = sorted(filter(exists, chans[lidar]), key=lambda d: d["timestamp"])
+        self.lidar_sweeps = any(not d["is_key_frame"] for d in self.lidars)
         self._lidar_ts = [d["timestamp"] for d in self.lidars]
         self.times = np.array([d["timestamp"] for d in self.cams], np.int64)
 
-        self._tracks = self._build_tracks(samples)
-        self._static = self._build_static_map(static_stride)
+        self._tracks = self._build_tracks(tables.ann_by_scene[scene["token"]])
+        self._static_pts = None
+
+    @property
+    def _static(self) -> np.ndarray:
+        """World static points, built on first use (needs the LiDAR files)."""
+        if self._static_pts is None:
+            # 20 Hz sweeps: every 2nd scan, 6 hits; 2 Hz keyframes: every scan, 3 hits
+            stride, hits = (2, 6) if self.lidar_sweeps else (1, 3)
+            self._static_pts = self._build_static_map(stride, hits)
+        return self._static_pts
 
     # --- poses -----------------------------------------------------------------
     def _T_world_ego(self, sd) -> np.ndarray:
@@ -123,11 +160,9 @@ class SceneOccupancy:
         return np.asarray(img.resize((self.image_width, h), Image.BILINEAR))
 
     # --- boxes -----------------------------------------------------------------
-    def _build_tracks(self, samples) -> dict:
+    def _build_tracks(self, annotations) -> dict:
         tracks = defaultdict(list)
-        for a in self.t.annotations:
-            if a["sample_token"] not in samples:
-                continue
+        for a in annotations:
             ts = self.t.sample[a["sample_token"]]["timestamp"]
             w, l, h = a["size"]
             yaw = yaw_of(quat_to_rot(a["rotation"]))
@@ -175,8 +210,8 @@ class SceneOccupancy:
         ego = transform(T_ego_s, self._lidar_points(sd))
         return transform(T_w_ego, ego), ego, transform(T_w_ego @ T_ego_s, np.zeros((1, 3)))[0]
 
-    def _build_static_map(self, stride: int) -> np.ndarray:
-        smap = StaticMap(voxel=0.25, min_hits=6)
+    def _build_static_map(self, stride: int, min_hits: int) -> np.ndarray:
+        smap = StaticMap(voxel=0.25, min_hits=min_hits)
         for sd in self.lidars[::max(1, stride)]:
             world, ego, _ = self._lidar_world(sd)
             r = np.linalg.norm(ego[:, :2], axis=1)
@@ -208,6 +243,10 @@ class SceneOccupancy:
             return np.zeros(self.grid.shape, bool)
         ego = transform(T_ego_world, self._static)
         return rasterize_points(ego[:, :2], self.grid, min_points=1)
+
+    def static_occupancy(self, i: int) -> np.ndarray:
+        """Static structure only (no boxes) in the ego frame at ``i``."""
+        return self._static_ego(np.linalg.inv(self.ego_pose(i)))
 
     def occupancy_at(self, i: int, offset_s: float) -> np.ndarray:
         """Occupancy at camera time ``i`` + ``offset_s`` in the ego frame at ``i``."""

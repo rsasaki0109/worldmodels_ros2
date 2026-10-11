@@ -189,6 +189,42 @@ class OccupancyHead:
         feats.append(np.broadcast_to(self._cell_pos().reshape(1, rows * cols, 2), (n, rows * cols, 2)))
         return np.concatenate(feats, -1).reshape(n, rows, cols, -1).astype(np.float32)
 
+    def bev_input_torch(self, z, z_prev, egos, device="cpu"):
+        """Torch twin of :meth:`bev_input` (same layout), used for training so the
+        lift runs on the GPU. Returns (N, F, rows, cols)."""
+        import torch
+
+        z = torch.as_tensor(np.asarray(z), device=device).float()
+        n, hf, wf, c = z.shape
+        idx, w = self._table((hf, wf))
+        key = ("torch", hf, wf, str(device))
+        if key not in self._tables:
+            self._tables[key] = (torch.as_tensor(idx, device=device),
+                                 torch.as_tensor(w, device=device),
+                                 torch.as_tensor((w.sum(-1) > 0).astype(np.float32), device=device),
+                                 torch.as_tensor(self._cell_pos().reshape(-1, 2), device=device))
+        idx_t, w_t, valid_t, pos_t = self._tables[key]
+        rows, cols = self.grid_shape
+        k = len(self.heights)
+        cells = rows * cols
+
+        def lift(m):
+            g = m.reshape(n, hf * wf, c)[:, idx_t]               # (N, K, cells, 4, c)
+            return (g * w_t[None, ..., None]).sum(3)             # (N, K, cells, c)
+
+        cur = lift(z)
+        diff = cur - lift(torch.as_tensor(np.asarray(z_prev), device=device).float())
+        feats = [cur.permute(0, 2, 1, 3).reshape(n, cells, k * c),
+                 diff.permute(0, 2, 1, 3).reshape(n, cells, k * c),
+                 valid_t.T[None].expand(n, cells, k)]
+        if self.ego_dim:
+            e = torch.as_tensor(np.asarray(egos, np.float32).reshape(n, -1)[:, : self.ego_dim],
+                                device=device) * self.ego_scale
+            feats.append(e[:, None].expand(n, cells, self.ego_dim))
+        feats.append(pos_t[None].expand(n, cells, 2))
+        x = torch.cat(feats, -1).reshape(n, rows, cols, -1)
+        return x.permute(0, 3, 1, 2).contiguous()
+
     # --- inference (pure numpy) -------------------------------------------------
     def _net(self, x: np.ndarray) -> np.ndarray:
         for i, (W, b) in enumerate(self.layers):
@@ -311,7 +347,6 @@ class OccupancyHead:
         ego_scale: float = 1.0,
         device: str = "cpu",
         seed: int = 0,
-        cache_bytes: int = 3 << 30,
         log=None,
     ) -> "OccupancyHead":
         """Train on *reduced* maps ``z``/``z_prev`` (N, Hf, Wf, c) (see
@@ -349,13 +384,7 @@ class OccupancyHead:
         steps = max(1, int(epochs) * ((n + batch_size - 1) // batch_size))
         sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=steps)
 
-        # The lift is fixed geometry, so lift every sample once (float16) instead of
-        # every epoch -- unless that would not fit comfortably in memory.
         egos = np.asarray(egos)
-        cached = None
-        if n * rows * cols * f_in * 2 <= cache_bytes:
-            cached = np.concatenate([head.bev_input(z[s:s + 256], z_prev[s:s + 256], egos[s:s + 256])
-                                     .astype(np.float16) for s in range(0, n, 256)])
 
         rng = np.random.default_rng(seed)
         model.train()
@@ -364,9 +393,7 @@ class OccupancyHead:
             total, count = 0.0, 0
             for s in range(0, n, batch_size):
                 ix = np.sort(perm[s:s + batch_size])
-                x = cached[ix].astype(np.float32) if cached is not None else \
-                    head.bev_input(z[ix], z_prev[ix], egos[ix])
-                xt = torch.from_numpy(x).permute(0, 3, 1, 2).to(device)
+                xt = head.bev_input_torch(z[ix], z_prev[ix], egos[ix], device=device)
                 yt = torch.from_numpy(tgt[ix].astype(np.float32)).to(device)
                 mt = torch.from_numpy(msk[ix].astype(np.float32)).to(device)[:, None]
                 logits = model(xt)

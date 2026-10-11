@@ -163,6 +163,17 @@ def test_conv_matches_torch():
     assert np.allclose(_conv_np(x, W, b, 2), ref2.permute(0, 2, 3, 1).numpy(), atol=1e-4)
 
 
+def test_torch_lift_matches_numpy():
+    pytest.importorskip("torch")
+    head = _random_head(fmap_c=3, channels=3)
+    rng = np.random.default_rng(3)
+    z, zp = rng.normal(size=(2, 3, 10, 12, 3)).astype(np.float32)
+    ego = rng.normal(size=(3, 2)).astype(np.float32)
+    ref = head.bev_input(z, zp, ego)
+    got = head.bev_input_torch(z, zp, ego).permute(0, 2, 3, 1).numpy()
+    assert got.shape == ref.shape and np.allclose(got, ref, atol=1e-5)
+
+
 def test_fit_trains_a_numpy_head():
     pytest.importorskip("torch")
     head0 = _random_head()

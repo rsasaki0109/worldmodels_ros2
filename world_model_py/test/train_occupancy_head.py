@@ -99,27 +99,40 @@ class SimSource:
         return {"frames": ep.frames, "ego": ep.actions[ts - 1], "ts": ts,
                 "target": np.stack([future_occupancy(ep, t, self.horizon, self.cfg) for t in ts]),
                 "mask": np.stack([visibility(ep, t, self.cfg) for t in ts]),
-                "current": np.stack([current_occupancy(ep, t, self.cfg) for t in ts])}
+                "current": np.stack([current_occupancy(ep, t, self.cfg) for t in ts]),
+                "static": np.zeros((len(ts), self.cfg.grid_size, self.cfg.grid_size), bool)}
 
 
 class NuScenesSource:
-    """nuScenes scenes; every CAM_FRONT frame with a full horizon is a sample."""
+    """nuScenes scenes; every CAM_FRONT frame with a full horizon is a sample.
+
+    Labels (no images) are cached per scene in ``--cache``, so they can be built
+    once on a CPU box (``--labels-only``) and reused where the GPU is: images are
+    always read from ``--nuscenes-root``."""
 
     def __init__(self, args):
         from world_model_py.nuscenes_occ import NuScenesTables
         from world_model_py.occupancy_labels import BevGrid
 
         self.args = args
+        log(f"[nuscenes] loading {args.nuscenes_version} tables")
         self.tables = NuScenesTables(args.nuscenes_root, args.nuscenes_version)
         self.grid = BevGrid(48, 48, 0.5, (0.0, -12.0))          # 24 m ahead, +-12 m
         self.resolution, self.origin, self.dt = self.grid.resolution, self.grid.origin, 0.5
         self.horizon = min(args.horizon, 4)                      # 2 s at 0.5 s
         self.heights, self.dilations = (0.0, 0.75, 1.5), (1, 2, 4)
         names = self.tables.scene_names()
-        held = set(NUSC_SPLIT["val"]) | set(NUSC_SPLIT["test"])
-        self.splits = {"train": [n for n in names if n not in held],
-                       "val": [n for n in NUSC_SPLIT["val"] if n in names],
-                       "test": [n for n in NUSC_SPLIT["test"] if n in names]}
+        if args.max_scenes:
+            names = names[: args.max_scenes]
+        if args.nuscenes_version == "v1.0-mini":
+            held = set(NUSC_SPLIT["val"]) | set(NUSC_SPLIT["test"])
+            self.splits = {"train": [n for n in names if n not in held],
+                           "val": [n for n in NUSC_SPLIT["val"] if n in names],
+                           "test": [n for n in NUSC_SPLIT["test"] if n in names]}
+        else:   # deterministic by sorted scene name: 1/8 test, 1/8 val
+            self.splits = {"train": [n for i, n in enumerate(names) if i % 8 not in (0, 4)],
+                           "val": [n for i, n in enumerate(names) if i % 8 == 4],
+                           "test": [n for i, n in enumerate(names) if i % 8 == 0]}
         self.cache = args.cache or os.path.join(args.out, "nuscenes_cache")
         os.makedirs(self.cache, exist_ok=True)
         self.camera = self._scene(self.splits["train"][0]).camera_model(0)
@@ -135,23 +148,35 @@ class NuScenesSource:
         return SceneOccupancy(self.tables, name, self.grid, horizon=self.horizon, dt=self.dt,
                               image_width=self.args.image_width)
 
-    def episode(self, name) -> dict:
-        path = os.path.join(self.cache, f"{name}_w{self.args.image_width}_h{self.horizon}.npz")
+    def labels(self, name, sc=None) -> dict:
+        path = os.path.join(self.cache, f"{name}_labels_h{self.horizon}.npz")
         if os.path.exists(path):
             with np.load(path) as z:
                 return {k: z[k] for k in z.files}
-        sc = self._scene(name)
+        sc = sc or self._scene(name)
         ts = sc.valid_indices()
-        ep = {"frames": np.stack([sc.image(i) for i in range(len(sc.cams))]),
-              "ego": np.stack([sc.ego_command(i) for i in ts]), "ts": ts,
-              "target": np.stack([sc.future_occupancy(i) for i in ts]),
-              "mask": np.stack([sc.visibility(i) for i in ts]),
-              "current": np.stack([sc.occupancy_at(i, 0.0) for i in ts])}
-        np.savez(path, **ep)
-        return ep
+        lab = {"n_cams": np.int64(len(sc.cams)), "ts": ts,
+               "ego": np.stack([sc.ego_command(i) for i in ts]),
+               "target": np.stack([sc.future_occupancy(i) for i in ts]),
+               "mask": np.stack([sc.visibility(i) for i in ts]),
+               "current": np.stack([sc.occupancy_at(i, 0.0) for i in ts]),
+               "static": np.stack([sc.static_occupancy(i) for i in ts])}
+        np.savez_compressed(path, **lab)
+        return lab
 
-    def frames(self, key):
-        return self.episode(key)["frames"]
+    def frames(self, name, sc=None):
+        from concurrent.futures import ThreadPoolExecutor
+        sc = sc or self._scene(name)
+        with ThreadPoolExecutor(8) as pool:          # JPEG decode releases the GIL
+            return np.stack(list(pool.map(sc.image, range(len(sc.cams)))))
+
+    def episode(self, name) -> dict:
+        sc = self._scene(name)
+        lab = self.labels(name, sc)
+        if int(lab["n_cams"]) != len(sc.cams):
+            raise RuntimeError(f"{name}: cached labels were built for {int(lab['n_cams'])} "
+                               f"frames but {len(sc.cams)} are on disk")
+        return {**lab, "frames": self.frames(name, sc)}
 
 
 def build_split(source, keys, encoders, pcas, batch, keep_frames=0):
@@ -159,7 +184,7 @@ def build_split(source, keys, encoders, pcas, batch, keep_frames=0):
     shared: ego command, future targets, visibility and current occupancy."""
     z = {k: [] for k in encoders}
     zp = {k: [] for k in encoders}
-    egos, targets, masks, current, frames = [], [], [], [], []
+    egos, targets, masks, current, static, frames = [], [], [], [], [], []
     for e, key in enumerate(keys):
         ep = source.episode(key)
         ts = ep["ts"]
@@ -172,6 +197,7 @@ def build_split(source, keys, encoders, pcas, batch, keep_frames=0):
         targets.append(ep["target"])
         masks.append(ep["mask"])
         current.append(ep["current"])
+        static.append(ep["static"])
         if e < keep_frames:
             frames.append(ep["frames"][ts])
         if (e + 1) % 10 == 0 or e + 1 == len(keys):
@@ -179,7 +205,8 @@ def build_split(source, keys, encoders, pcas, batch, keep_frames=0):
     out = {"z": {k: np.concatenate(v) for k, v in z.items()},
            "zp": {k: np.concatenate(v) for k, v in zp.items()},
            "ego": np.concatenate(egos), "target": np.concatenate(targets),
-           "mask": np.concatenate(masks), "current": np.concatenate(current)}
+           "mask": np.concatenate(masks), "current": np.concatenate(current),
+           "static": np.concatenate(static)}
     if frames:
         out["frames"] = np.concatenate(frames)
     return out
@@ -242,6 +269,9 @@ def main() -> int:
     ap.add_argument("--nuscenes-version", default="v1.0-mini")
     ap.add_argument("--image-width", type=int, default=448, help="nuScenes frames are resized")
     ap.add_argument("--cache", default="", help="nuScenes label cache dir")
+    ap.add_argument("--max-scenes", type=int, default=0, help="nuScenes: cap scenes (0 = all)")
+    ap.add_argument("--labels-only", action="store_true",
+                    help="nuScenes: build the label cache and exit (no encoder / GPU)")
     ap.add_argument("--encoder", default="pixels", choices=["pixels", "ijepa"])
     ap.add_argument("--model-id", default="facebook/ijepa_vith14_1k")
     ap.add_argument("--episodes", type=int, default=120)
@@ -265,6 +295,16 @@ def main() -> int:
         raise SystemExit("--data nuscenes needs --nuscenes-root (or NUSCENES_ROOT)")
     source = NuScenesSource(args) if args.data == "nuscenes" else SimSource(args)
     args.horizon = source.horizon
+    if args.labels_only:
+        if args.data != "nuscenes":
+            raise SystemExit("--labels-only is for --data nuscenes")
+        keys = [k for v in source.splits.values() for k in v]
+        log(f"[labels] {source.describe()}")
+        for e, key in enumerate(keys):
+            t0 = time.time()
+            lab = source.labels(key)
+            log(f"  {e + 1}/{len(keys)} {key}: {len(lab['ts'])} samples in {time.time() - t0:.1f}s")
+        return 0
 
     names = [args.encoder]
     if args.encoder != "pixels" and not args.no_pixel_baseline:
@@ -296,21 +336,26 @@ def main() -> int:
                           "resolution": source.resolution, "dt": source.dt,
                           "occupancy_rate": float(tr["target"].mean()),
                           "visible_rate": float(tr["mask"].mean())}}
-    methods, methods_all = {}, {}
+    methods, methods_all, methods_agents = {}, {}, {}
+    has_static = bool(te["static"].any())
+
+    def score(name, pred):
+        """visible-cell IoU, all-cell IoU, and agents-only IoU (static structure
+        excluded from both prediction and target, so only movers count)."""
+        methods[name] = per_step_iou(pred, te["target"], te["mask"])
+        methods_all[name] = per_step_iou(pred, te["target"])
+        dyn = ~te["static"][:, None]
+        methods_agents[name] = per_step_iou(pred & dyn, te["target"] & dyn, te["mask"])
 
     # baseline: per-cell prior (threshold picked on val, like the heads)
     prior = tr["target"].mean(0)
     best = max(np.linspace(0.05, 0.95, 19),
                key=lambda t: pooled_iou(np.broadcast_to(prior >= t, va["target"].shape),
                                         va["target"], va["mask"]))
-    pred = np.broadcast_to(prior >= best, te["target"].shape)
-    methods["prior"] = per_step_iou(pred, te["target"], te["mask"])
-    methods_all["prior"] = per_step_iou(pred, te["target"])
+    score("prior", np.broadcast_to(prior >= best, te["target"].shape))
 
     # privileged reference: ground-truth current occupancy held constant
-    pred = np.repeat(te["current"][:, None], args.horizon, axis=1)
-    methods["persist-gt"] = per_step_iou(pred, te["target"], te["mask"])
-    methods_all["persist-gt"] = per_step_iou(pred, te["target"])
+    score("persist-gt", np.repeat(te["current"][:, None], args.horizon, axis=1))
 
     previews = {}
     for name in names:
@@ -324,8 +369,7 @@ def main() -> int:
         thr = head.calibrate(va["z"][name], va["zp"][name], va["ego"], va["target"], va["mask"])
         log(f"  trained in {time.time() - t0:.1f}s, threshold {thr:.2f}")
         proba = predict(head, te, name)
-        methods[name] = per_step_iou(proba >= thr, te["target"], te["mask"])
-        methods_all[name] = per_step_iou(proba >= thr, te["target"])
+        score(name, proba >= thr)
         path = os.path.join(args.out, f"occupancy_head_{name}.npz")
         head.save(path)
         log(f"  wrote {path} ({os.path.getsize(path) / 1e6:.2f} MB)")
@@ -334,6 +378,9 @@ def main() -> int:
     results["iou_per_step"] = methods
     results["iou_mean"] = {k: float(np.mean(v)) for k, v in methods.items()}
     results["iou_mean_all_cells"] = {k: float(np.mean(v)) for k, v in methods_all.items()}
+    if has_static:
+        results["agents_iou_per_step"] = methods_agents
+        results["agents_iou_mean"] = {k: float(np.mean(v)) for k, v in methods_agents.items()}
     with open(os.path.join(args.out, "metrics.json"), "w") as f:
         json.dump(results, f, indent=2)
 
@@ -343,6 +390,10 @@ def main() -> int:
     for k, v in methods.items():
         log(k.ljust(12) + "".join(f"  {x:.3f}" for x in v)
             + f"  {np.mean(v):.3f}   ({np.mean(methods_all[k]):.3f})")
+    if has_static:
+        log("\nagents-only IoU (static structure excluded; visible cells)")
+        for k, v in methods_agents.items():
+            log(k.ljust(12) + "".join(f"  {x:.3f}" for x in v) + f"  {np.mean(v):.3f}")
 
     if "frames" in te:
         n = len(te["frames"])
