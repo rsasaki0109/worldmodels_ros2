@@ -107,6 +107,11 @@ def union_in_costmap(msg: FutureOccupancy, cm: OccupancyGrid, threshold=50) -> n
     return out
 
 
+def _exe(package: str, name: str) -> str:
+    from ament_index_python.packages import get_package_prefix
+    return os.path.join(get_package_prefix(package), "lib", package, name)
+
+
 def main() -> int:
     ap = argparse.ArgumentParser(description=__doc__.split("\n")[0])
     ap.add_argument("--head", required=True)
@@ -130,19 +135,25 @@ def main() -> int:
                            image_width=args.image_width)
     idx = list(range(args.start, args.start + args.frames))
 
+    ros2 = [sys.executable, shutil.which("ros2")]
+    nodes = subprocess.run(ros2 + ["node", "list"], capture_output=True, text=True).stdout.split()
+    if "/costmap" in nodes or "/world_model_runtime" in nodes:
+        raise SystemExit(f"stale ROS nodes are running ({nodes}); stop them first")
+
     yaml = tempfile.NamedTemporaryFile("w", suffix=".yaml", delete=False)
     yaml.write(COSTMAP_YAML)
     yaml.close()
-    # run python tools with *this* interpreter: their shebangs may point at a
+    # python tools run with *this* interpreter: their shebangs may point at a
     # python that is not the one ROS 2 was built for
-    ros2 = [sys.executable, shutil.which("ros2")]
     procs = [
         subprocess.Popen([sys.executable, "-m", "world_model_py.runtime_node", "--ros-args",
                           "-p", "adapter:=ijepa", "-p", f"occupancy_head:={os.path.abspath(args.head)}",
                           "-p", f"horizon:={head.horizon}"]),
-        subprocess.Popen(ros2 + ["run", "nav2_costmap_2d", "nav2_costmap_2d", "--ros-args",
+        # C++ executables are started directly (not via `ros2 run`) so the
+        # shutdown signal reaches them and no stale /costmap survives a run
+        subprocess.Popen([_exe("nav2_costmap_2d", "nav2_costmap_2d"), "--ros-args",
                           "--params-file", yaml.name]),
-        subprocess.Popen(ros2 + ["run", "tf2_ros", "static_transform_publisher",
+        subprocess.Popen([_exe("tf2_ros", "static_transform_publisher"),
                           "--frame-id", "odom", "--child-frame-id", "base_link"]),
     ]
     failures = []
@@ -192,17 +203,26 @@ def main() -> int:
                 "unknown outside FOV": all((g[~head.fov_mask()] == -1).all() for g in got),
                 "matches offline head": all(np.array_equal(a, b) for a, b in zip(got, ref.occupancy)),
             }
-            # costmap reflects this prediction once it has refreshed
-            t_pub = time.time()
-            node.costmap = None
-            node.spin_until(lambda: node.costmap is not None
-                            and time.time() - t_pub > 0.6, 10)
-            cm = node.costmap
+            # the costmap reflects this prediction within a refresh cycle or two;
+            # stale cells from the previous prediction must be gone too
+            end = time.time() + 3.0
+            cm, exp, lethal = None, None, None
+            while time.time() < end:
+                node.costmap = None
+                node.spin_until(lambda: node.costmap is not None, 2.0)
+                if node.costmap is None:
+                    continue
+                cm = node.costmap
+                exp, lethal = union_in_costmap(occ, cm), costmap_lethal(cm)
+                if np.array_equal(exp, lethal):
+                    break
             if cm is not None:
-                exp = union_in_costmap(occ, cm)
-                lethal = costmap_lethal(cm)
-                checks["costmap == union of predicted grids"] = bool(np.array_equal(exp, lethal))
+                same = bool(np.array_equal(exp, lethal))
+                checks["costmap == union of predicted grids"] = same
                 checks["costmap has predicted obstacles"] = bool(lethal.any())
+                if not same:
+                    print(f"  costmap diff: {int((lethal & ~exp).sum())} extra (stale?) / "
+                          f"{int((exp & ~lethal).sum())} missing of {int(exp.sum())}", flush=True)
             else:
                 checks["costmap published"] = False
             results.append((k, checks, got, cm))
