@@ -24,6 +24,7 @@ from __future__ import annotations
 import argparse
 import os
 import shutil
+import signal
 import subprocess
 import sys
 import tempfile
@@ -39,24 +40,25 @@ from std_msgs.msg import Header
 from world_model_msgs.msg import FutureOccupancy, Observation
 from world_model_py import conversions as conv
 
+# the standalone nav2_costmap_2d executable is a lifecycle node named /costmap
+# that publishes its grid on /costmap
 COSTMAP_YAML = """
 costmap:
-  costmap:
-    ros__parameters:
-      global_frame: base_link
-      robot_base_frame: base_link
-      rolling_window: true
-      width: 50
-      height: 50
-      resolution: 0.5
-      update_frequency: 5.0
-      publish_frequency: 5.0
-      always_send_full_costmap: true
-      plugins: ["world_model_layer"]
-      world_model_layer:
-        plugin: "world_model_costmap::WorldModelLayer"
-        topic: /world_model_runtime/future_occupancy
-        occupied_threshold: 50
+  ros__parameters:
+    global_frame: base_link
+    robot_base_frame: base_link
+    rolling_window: true
+    width: 50
+    height: 50
+    resolution: 0.5
+    update_frequency: 5.0
+    publish_frequency: 5.0
+    always_send_full_costmap: true
+    plugins: ["world_model_layer"]
+    world_model_layer:
+      plugin: "world_model_costmap::WorldModelLayer"
+      topic: /world_model_runtime/future_occupancy
+      occupied_threshold: 50
 """
 
 
@@ -70,7 +72,7 @@ class Harness(Node):
                                  self.occ.append, 10)
         qos = QoSProfile(depth=1, reliability=ReliabilityPolicy.RELIABLE,
                          durability=DurabilityPolicy.TRANSIENT_LOCAL)
-        self.create_subscription(OccupancyGrid, "/costmap/costmap", self._on_costmap, qos)
+        self.create_subscription(OccupancyGrid, "/costmap", self._on_costmap, qos)
 
     def _on_costmap(self, msg):
         self.costmap = msg
@@ -140,6 +142,8 @@ def main() -> int:
                           "-p", f"horizon:={head.horizon}"]),
         subprocess.Popen(ros2 + ["run", "nav2_costmap_2d", "nav2_costmap_2d", "--ros-args",
                           "--params-file", yaml.name]),
+        subprocess.Popen(ros2 + ["run", "tf2_ros", "static_transform_publisher",
+                          "--frame-id", "odom", "--child-frame-id", "base_link"]),
     ]
     failures = []
     try:
@@ -148,8 +152,9 @@ def main() -> int:
         # bring the costmap up (it is a lifecycle node)
         time.sleep(3.0)
         for t in ("configure", "activate"):
-            subprocess.run(ros2 + ["lifecycle", "set", "/costmap/costmap", t], check=False,
-                           capture_output=True, timeout=60)
+            r = subprocess.run(ros2 + ["lifecycle", "set", "/costmap", t], check=False,
+                               capture_output=True, text=True, timeout=60)
+            print(f"costmap {t}: {(r.stdout + r.stderr).strip()}", flush=True)
         if not node.spin_until(lambda: node.count_subscribers("/world_model_runtime/observation") > 0, 180):
             raise SystemExit("runtime_node never subscribed to observations")
         time.sleep(2.0)
@@ -210,7 +215,7 @@ def main() -> int:
             _render(args.out, frames, results, head)
     finally:
         for p in procs:
-            p.terminate()
+            p.send_signal(signal.SIGINT)
         for p in procs:
             try:
                 p.wait(timeout=10)
