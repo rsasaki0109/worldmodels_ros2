@@ -646,11 +646,47 @@ Held-out pooled IoU (visible cells, 16×16 grid @ 0.5 m, dt 0.2 s), GPU-free
 | `persist-gt` (privileged: true current occupancy held) | 0.87 | 0.55 | 0.30 | 0.54 |
 
 Honest scope: these numbers come from a synthetic world. They validate the
-pipeline and the head design, not real-world accuracy. Real data with LiDAR-derived
-labels (nuScenes + Occ3D) is next. Measured design notes: a head on the
+pipeline and the head design, not real-world accuracy. Measured design notes: a head on the
 mean-pooled latent, or a dense image→grid MLP, overfits and stays near IoU 0.1.
 The fixed geometric lift is what makes the head generalise. At 0.25 m cells the
 camera's depth resolution beyond ~4 m (< 1.5 px per cell) caps any method.
+
+### Real data: nuScenes labels from LiDAR + boxes
+
+`--data nuscenes` trains on real `CAM_FRONT` frames (~12 Hz). The labels are
+built from the dataset's own LiDAR and 3D boxes by `world_model_py.occupancy_labels`
+(dataset-agnostic, so the same code serves a camera + LiDAR rosbag) and
+`world_model_py.nuscenes_occ` (a devkit-free nuScenes reader):
+
+- **static structure**: LiDAR returns 0.3–2.5 m above a local ground estimate,
+  accumulated over the scene in the world frame. Points inside annotated boxes
+  are removed, and a voxel must be hit in ≥ 6 scans, so movers don't smear;
+- **agents**: annotated boxes interpolated to `t + k·dt` and rasterised as
+  oriented footprints;
+- **visibility**: cells a LiDAR ray reached at `t`, within the camera's view
+  (the Occ3D `mask_camera` idea).
+
+```bash
+# nuScenes v1.0-mini (public, ~4 GB; register + accept the terms at nuscenes.org)
+python3 world_model_py/test/train_occupancy_head.py --data nuscenes \
+    --nuscenes-root /data/nuscenes --encoder pixels        # or ijepa on a GPU
+```
+
+The setup is a 48×48 grid at 0.5 m (24 m ahead, ±12 m), 4 steps of 0.5 s
+(2 s), and dilated BEV convolutions, because cars move up to ~20 m in 2 s.
+Split: 7 train scenes, val `scene-0553`, test `scene-0796` (day) and
+`scene-1094` (night). Held-out pooled IoU on visible cells:
+
+| method | t+0.5 s | t+1 s | t+2 s | mean |
+|---|---|---|---|---|
+| `prior` | 0.16 | 0.16 | 0.17 | 0.16 |
+| head on `pixels` | 0.21 | 0.21 | 0.21 | 0.21 |
+| `persist-gt` (privileged) | 0.88 | 0.80 | 0.74 | 0.79 |
+
+`v1.0-mini` is only ~1.5 k training frames, so raw pixels barely beat the
+prior. This is the baseline a semantic encoder (`--encoder ijepa`) has to
+beat, run on Colab with `DATA = "nuscenes"` in the notebook. `persist-gt` is
+high because most occupied cells are static structure.
 
 ## Nav2 avoidance preview (predicted occupancy → detour)
 

@@ -311,6 +311,7 @@ class OccupancyHead:
         ego_scale: float = 1.0,
         device: str = "cpu",
         seed: int = 0,
+        cache_bytes: int = 3 << 30,
         log=None,
     ) -> "OccupancyHead":
         """Train on *reduced* maps ``z``/``z_prev`` (N, Hf, Wf, c) (see
@@ -348,6 +349,14 @@ class OccupancyHead:
         steps = max(1, int(epochs) * ((n + batch_size - 1) // batch_size))
         sched = torch.optim.lr_scheduler.OneCycleLR(opt, max_lr=lr, total_steps=steps)
 
+        # The lift is fixed geometry, so lift every sample once (float16) instead of
+        # every epoch -- unless that would not fit comfortably in memory.
+        egos = np.asarray(egos)
+        cached = None
+        if n * rows * cols * f_in * 2 <= cache_bytes:
+            cached = np.concatenate([head.bev_input(z[s:s + 256], z_prev[s:s + 256], egos[s:s + 256])
+                                     .astype(np.float16) for s in range(0, n, 256)])
+
         rng = np.random.default_rng(seed)
         model.train()
         for ep in range(int(epochs)):
@@ -355,7 +364,8 @@ class OccupancyHead:
             total, count = 0.0, 0
             for s in range(0, n, batch_size):
                 ix = np.sort(perm[s:s + batch_size])
-                x = head.bev_input(z[ix], z_prev[ix], np.asarray(egos)[ix])
+                x = cached[ix].astype(np.float32) if cached is not None else \
+                    head.bev_input(z[ix], z_prev[ix], egos[ix])
                 xt = torch.from_numpy(x).permute(0, 3, 1, 2).to(device)
                 yt = torch.from_numpy(tgt[ix].astype(np.float32)).to(device)
                 mt = torch.from_numpy(msk[ix].astype(np.float32)).to(device)[:, None]
@@ -386,7 +396,9 @@ class OccupancyHead:
                                                            np.asarray(egos)[s:s + batch])
                                 for s in range(0, len(z), batch)])
         best_t, best_iou = 0.5, -1.0
-        for t in candidates if candidates is not None else np.linspace(0.05, 0.95, 19):
+        if candidates is None:      # dense where calibrated heads usually land
+            candidates = np.concatenate([np.geomspace(0.005, 0.05, 8), np.linspace(0.1, 0.95, 18)])
+        for t in candidates:
             iou = pooled_iou(proba >= t, targets, masks)
             if iou > best_iou:
                 best_t, best_iou = float(t), iou

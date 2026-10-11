@@ -20,6 +20,10 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 - **`test/train_occupancy_head.py`** and the Colab notebook
   **`notebooks/train_occupancy_head.ipynb`**: train and score (visible-cell
   pooled IoU) against `prior` / `persist-gt` / `pixels` baselines.
+- **Real-data labels**: `occupancy_labels` (static LiDAR map with robust local
+  ground, box footprints, LiDAR-ray x camera-FOV visibility) and `nuscenes_occ`
+  (a devkit-free nuScenes reader) make `CAM_FRONT` training samples with future
+  occupancy; the train script and notebook take `--data nuscenes`.
 - Encoders expose `embed_with_map` (patch tokens). The latent stays the token
   mean, so existing behaviour is unchanged.
 
