@@ -128,6 +128,7 @@ class BagOccupancy:
                  max_range: float = 30.0, scan_window: float = 0.1, robot_radius: float = 0.5,
                  log=None):
         from rosbags.highlevel import AnyReader
+        from rosbags.typesys import Stores, get_typestore
 
         self.path = Path(path)
         self.name = self.path.stem
@@ -137,7 +138,10 @@ class BagOccupancy:
         self.scan_window_ns = int(scan_window * 1e9)
         log = log or (lambda *_: None)
 
-        with AnyReader([self.path]) as reader:
+        # recorders sometimes store empty message definitions (common in ROS 1
+        # bags): fall back to the standard definitions for those types
+        store = get_typestore(Stores.ROS1_NOETIC if self.path.suffix == ".bag" else Stores.LATEST)
+        with AnyReader([self.path], default_typestore=store) as reader:
             conns = {c.topic: c for c in reader.connections}
 
             def pick(given, types, prefer=()):
