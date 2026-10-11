@@ -103,6 +103,17 @@ controller_server:
         cost_weight: 5.0
         offset_from_furthest: 5
         threshold_to_consider: 1.4
+      # gz_nav.launch.py wm_mode:=critic adds this to `critics` (the costmaps then
+      # stay LiDAR-only): each trajectory point at time t is checked against the
+      # prediction for t
+      WorldModelTimeCritic:
+        enabled: true
+        topic: /world_model_runtime/future_occupancy
+        occupied_threshold: 50
+        radius: 0.55            # robot radius + pedestrian clearance (m)
+        cost_weight: 60.0       # per second spent in predicted occupancy
+        cost_power: 1
+        max_age: 1.0
       PathAngleCritic:
         enabled: true
         cost_power: 1
@@ -152,7 +163,7 @@ local_costmap:
         # graded, non-lethal cost per prediction step (t+0.5 .. t+2 s): an
         # all-LETHAL union swallows the robot as a pedestrian approaches, and
         # MPPI then sees every trajectory in collision (gz_nav.launch.py
-        # wm_lethal:=true restores the all-lethal encoding for comparison)
+        # wm_mode:=lethal restores the all-lethal encoding for comparison)
         step_costs: [220, 180, 140, 100]
         robot_clear_radius: 0.5
       inflation_layer: &inflation

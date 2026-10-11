@@ -1,0 +1,11 @@
+<library path="world_model_time_critic">
+  <!-- MPPI looks critics up as "mppi::critics::" + the name in its critics list -->
+  <class name="mppi::critics::WorldModelTimeCritic"
+         type="world_model_mppi_critics::WorldModelTimeCritic"
+         base_class_type="mppi::critics::CriticFunction">
+    <description>
+      Penalises MPPI trajectories by the time they spend where a World Model
+      predicts occupancy at that same moment (FutureOccupancy, per step).
+    </description>
+  </class>
+</library>
