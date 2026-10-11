@@ -681,12 +681,14 @@ Split: 7 train scenes, val `scene-0553`, test `scene-0796` (day) and
 |---|---|---|---|---|
 | `prior` | 0.16 | 0.16 | 0.17 | 0.16 |
 | head on `pixels` | 0.21 | 0.21 | 0.21 | 0.21 |
+| **head on `ijepa`** (ViT-H/14 patch tokens) | **0.23** | **0.23** | **0.23** | **0.23** |
 | `persist-gt` (privileged) | 0.88 | 0.80 | 0.74 | 0.79 |
 
-`v1.0-mini` is only ~1.5 k training frames, so raw pixels barely beat the
-prior. This is the baseline a semantic encoder (`--encoder ijepa`) has to
-beat, run on Colab with `DATA = "nuscenes"` in the notebook. `persist-gt` is
-high because most occupied cells are static structure.
+`v1.0-mini` is only ~1.5 k training frames from 7 scenes. I-JEPA tokens beat
+raw pixels (+10 % relative), but both heads mostly learn the road layout
+(free carriageway, occupied roadside) rather than individual agents. More
+training scenes are the next lever. `persist-gt` is high because most occupied
+cells are static structure.
 
 ## Nav2 avoidance preview (predicted occupancy → detour)
 
