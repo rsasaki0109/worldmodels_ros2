@@ -674,21 +674,29 @@ python3 world_model_py/test/train_occupancy_head.py --data nuscenes \
 
 The setup is a 48×48 grid at 0.5 m (24 m ahead, ±12 m), 4 steps of 0.5 s
 (2 s), and dilated BEV convolutions, because cars move up to ~20 m in 2 s.
-Split: 7 train scenes, val `scene-0553`, test `scene-0796` (day) and
-`scene-1094` (night). Held-out pooled IoU on visible cells:
 
-| method | t+0.5 s | t+1 s | t+2 s | mean |
-|---|---|---|---|---|
-| `prior` | 0.16 | 0.16 | 0.17 | 0.16 |
-| head on `pixels` | 0.21 | 0.21 | 0.21 | 0.21 |
-| **head on `ijepa`** (ViT-H/14 patch tokens) | **0.23** | **0.23** | **0.23** | **0.23** |
-| `persist-gt` (privileged) | 0.88 | 0.80 | 0.74 | 0.79 |
+**Results on `v1.0-trainval` blob 01** (85 scenes; scene split 63 / 11 / 11;
+12.9 k training frames; I-JEPA encoding + training on a Colab T4 via the Colab
+CLI). Held-out pooled IoU on visible cells:
 
-`v1.0-mini` is only ~1.5 k training frames from 7 scenes. I-JEPA tokens beat
-raw pixels (+10 % relative), but both heads mostly learn the road layout
-(free carriageway, occupied roadside) rather than individual agents. More
-training scenes are the next lever. `persist-gt` is high because most occupied
-cells are static structure.
+| method | t+0.5 s | t+1 s | t+2 s | mean | **agents only** (mean) |
+|---|---|---|---|---|---|
+| `prior` | 0.18 | 0.19 | 0.19 | 0.19 | 0.06 |
+| head on `pixels` | 0.29 | 0.29 | 0.28 | 0.29 | 0.12 |
+| **head on `ijepa`** (ViT-H/14 patch tokens) | **0.32** | **0.31** | **0.31** | **0.31** | **0.15** |
+| `persist-gt` (privileged: true current occupancy held) | 0.92 | 0.88 | 0.87 | 0.88 | 0.67 |
+
+*Agents only* removes static structure from both prediction and target, so
+only movers and annotated objects count. Going from 7 scenes (`v1.0-mini`:
+ijepa 0.23, pixels 0.21) to 63 scenes improves both heads, and I-JEPA leads
+throughout: +10 % overall and +28 % on agents. Heads now localise large
+parked or stopped vehicles. There is still a wide gap to `persist-gt`, which
+reads the labels: monocular range to small or distant agents is the limit at
+this data scale.
+
+Build the labels anywhere with a CPU (`--labels-only`, ~7 s per scene), then
+encode and train on a GPU. The heads trained on nuScenes data fall under the
+nuScenes terms of use (non-commercial).
 
 ## Nav2 avoidance preview (predicted occupancy → detour)
 
