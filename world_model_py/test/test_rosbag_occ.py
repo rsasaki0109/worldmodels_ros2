@@ -155,3 +155,14 @@ def test_visibility(bag):
     assert vis[_cell(3.0, 0.0)]                                    # open floor ahead
     assert not vis[_cell(WALL_X - x0 + 1.0, 0.0)]                  # behind the wall
     assert not vis[_cell(0.3, 3.5)]                                # outside the camera's view
+
+
+def test_intrinsics_replace_missing_camera_info(tmp_path):
+    from world_model_py.rosbag_occ import BagOccupancy
+    path = tmp_path / "noinfo"
+    _make_bag(path, duration=3.0)
+    b = BagOccupancy(path, GRID, image_width=64, camera_info_topic="/camera/color/camera_info",
+                     intrinsics=(32.0, 32.0, 32.0, 24.0))
+    ref = BagOccupancy(path, GRID, image_width=64)
+    assert b.topics["camera_info"] == ""
+    assert np.allclose(b.camera.P, ref.camera.P)

@@ -206,7 +206,10 @@ class RosbagSource:
                                   image_width=args.image_width, image_topic=args.image_topic,
                                   camera_info_topic=args.camera_info_topic,
                                   lidar_topic=args.lidar_topic, odom_topic=args.odom_topic,
-                                  camera_stride=args.camera_stride, log=log) for p in paths]
+                                  camera_stride=args.camera_stride,
+                                  intrinsics=([float(v) for v in args.camera_intrinsics.split(",")]
+                                              if args.camera_intrinsics else None),
+                                  camera_frame=args.camera_frame, log=log) for p in paths]
         self.camera = self.bags[0].camera
         for b in self.bags[1:]:
             if not np.allclose(b.camera.P, self.camera.P, rtol=0.05, atol=2.0):
@@ -362,6 +365,9 @@ def main() -> int:
     ap.add_argument("--camera-info-topic", default="")
     ap.add_argument("--lidar-topic", default="")
     ap.add_argument("--odom-topic", default="")
+    ap.add_argument("--camera-intrinsics", default="",
+                    help="rosbag without CameraInfo: fx,fy,cx,cy in recorded-image pixels")
+    ap.add_argument("--camera-frame", default="", help="rosbag: override the camera TF frame")
     ap.add_argument("--camera-stride", type=int, default=2, help="rosbag: keep every Nth frame")
     ap.add_argument("--segment-s", type=float, default=20.0, help="rosbag: episode length")
     ap.add_argument("--grid-cells", type=int, default=48, help="rosbag: BEV cells per side")

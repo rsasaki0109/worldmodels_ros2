@@ -84,6 +84,25 @@ def decode_image(msg) -> np.ndarray:
     return np.ascontiguousarray(arr[..., :3])
 
 
+#: fallbacks for types a typestore may lack (e.g. tf2_msgs in the ROS 1 store)
+_FALLBACK_MSGDEFS = {
+    "tf2_msgs/msg/TFMessage": "geometry_msgs/TransformStamped[] transforms\n",
+}
+
+
+def _ensure_types(store, conns) -> None:
+    """Register any message type the typestore lacks: from the bag's own
+    definition when it has one, else from a built-in fallback."""
+    from rosbags.typesys import get_types_from_msg
+    for c in conns:
+        if c.msgtype in store.types:
+            continue
+        text = getattr(getattr(c, "msgdef", None), "data", "") or _FALLBACK_MSGDEFS.get(c.msgtype, "")
+        if not text:
+            raise KeyError(f"no message definition for {c.msgtype} ({c.topic})")
+        store.register(get_types_from_msg(text, c.msgtype))
+
+
 def _tf_of(transform_msg) -> np.ndarray:
     t, q = transform_msg.translation, transform_msg.rotation
     return make_tf([t.x, t.y, t.z], [q.w, q.x, q.y, q.z])
@@ -128,7 +147,9 @@ class BagOccupancy:
                  image_width: int = 448, image_topic: str = "", camera_info_topic: str = "",
                  lidar_topic: str = "", odom_topic: str = "", camera_stride: int = 1,
                  max_range: float = 30.0, scan_window: float = 0.1, robot_radius: float = 0.5,
-                 log=None):
+                 intrinsics=None, camera_frame: str = "", log=None):
+        """``intrinsics=(fx, fy, cx, cy)`` (pixels at the recorded resolution) and
+        ``camera_frame`` replace a missing ``CameraInfo`` topic."""
         from rosbags.typesys import Stores, get_typestore
 
         self.path = Path(path)
@@ -169,14 +190,20 @@ class BagOccupancy:
                 return max(cands, key=lambda c: c.msgcount)
 
             cam_c = pick(image_topic, _IMAGE_TYPES, ("rgb", "color", "image"))
-            info_c = pick(camera_info_topic, ("sensor_msgs/msg/CameraInfo",),
-                          (cam_c.topic.rsplit("/", 2)[0],))
+            info_c = None
+            if intrinsics is None:
+                try:
+                    info_c = pick(camera_info_topic, ("sensor_msgs/msg/CameraInfo",),
+                                  (cam_c.topic.rsplit("/", 2)[0],))
+                except KeyError as exc:
+                    raise KeyError(f"{exc} -- pass intrinsics=(fx, fy, cx, cy) "
+                                   "(--camera-intrinsics) for bags without CameraInfo") from None
             lidar_c = pick(lidar_topic, ("sensor_msgs/msg/PointCloud2",), ("velodyne", "lidar", "points"))
             odom_c = pick(odom_topic, ("nav_msgs/msg/Odometry",), ("odom",))
             tf_cs = [c for c in conns.values() if c.msgtype == "tf2_msgs/msg/TFMessage"]
-            log(f"[bag] {self.name}: camera={cam_c.topic} info={info_c.topic} "
+            log(f"[bag] {self.name}: camera={cam_c.topic} info={info_c.topic if info_c else intrinsics} "
                 f"lidar={lidar_c.topic} odom={odom_c.topic}")
-            self.topics = {"image": cam_c.topic, "camera_info": info_c.topic,
+            self.topics = {"image": cam_c.topic, "camera_info": info_c.topic if info_c else "",
                            "lidar": lidar_c.topic, "odom": odom_c.topic}
 
             info = None
@@ -185,13 +212,18 @@ class BagOccupancy:
             dynamic = set()
             base_frame = None
             cam_count = 0
-            for conn, _, raw in reader.messages(connections=[cam_c, info_c, lidar_c, odom_c, *tf_cs]):
+            native = None
+            used = [c for c in (cam_c, info_c, lidar_c, odom_c, *tf_cs) if c is not None]
+            _ensure_types(store, used)
+            for conn, _, raw in reader.messages(connections=used):
                 msg = deserialize(raw, conn.msgtype)
                 if conn is info_c:
                     info = info or msg
                 elif conn is cam_c:
                     if cam_count % max(1, int(camera_stride)) == 0:
-                        cams.append((stamp_ns(msg.header), msg.header.frame_id, self._resize(decode_image(msg))))
+                        img = decode_image(msg)
+                        native = native if cam_count else (img.shape[1], img.shape[0])
+                        cams.append((stamp_ns(msg.header), msg.header.frame_id, self._resize(img)))
                     cam_count += 1
                 elif conn is lidar_c:
                     xyz = pointcloud2_xyz(msg)
@@ -219,7 +251,7 @@ class BagOccupancy:
                                     continue
                         tf.add(key[0], key[1], _tf_of(t.transform))
 
-        if info is None or not cams or not scans or not odom:
+        if (info is None and intrinsics is None) or not cams or not scans or not odom:
             raise ValueError(f"bag {self.name}: missing camera_info/camera/lidar/odom messages")
         self.base_frame = base_frame.lstrip("/")
         cams.sort(key=lambda c: c[0])
@@ -229,12 +261,19 @@ class BagOccupancy:
         self._odom_T = np.stack([o[1] for o in odom])
 
         # sensor mounts in the base frame
-        self.T_base_cam = tf.lookup(self.base_frame, info.header.frame_id or cams[0][1])
+        cam_frame = camera_frame or (info.header.frame_id if info is not None else "") or cams[0][1]
+        self.T_base_cam = tf.lookup(self.base_frame, cam_frame)
         self.T_base_lidar = tf.lookup(self.base_frame, scans[0][1])
-        K = np.asarray(info.k if hasattr(info, "k") else info.K, np.float64).reshape(3, 3).copy()
-        s = self.image_width / float(info.width)
+        if info is not None:
+            K = np.asarray(info.k if hasattr(info, "k") else info.K, np.float64).reshape(3, 3).copy()
+            width, height = float(info.width), float(info.height)
+        else:
+            fx, fy, cx, cy = (float(v) for v in intrinsics)
+            K = np.array([[fx, 0.0, cx], [0.0, fy, cy], [0.0, 0.0, 1.0]])
+            width, height = float(native[0]), float(native[1])
+        s = self.image_width / width
         K[:2] *= s
-        h = int(round(info.height * s))
+        h = int(round(height * s))
         self.camera = CameraModel.from_camera_info(K, self.image_width, h,
                                                    np.linalg.inv(self.T_base_cam))
 
