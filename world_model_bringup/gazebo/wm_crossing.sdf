@@ -1,0 +1,124 @@
+<?xml version="1.0"?>
+<!-- World Model closed-loop crossing: a corridor with static crates and four
+     "pedestrians" walking across it. The robot carries a camera, a 16-beam 3D
+     LiDAR and odometry; it is driven kinematically by /cmd_vel. -->
+<sdf version="1.9">
+  <world name="wm_crossing">
+    <physics name="1ms" type="ignored"><max_step_size>0.004</max_step_size><real_time_factor>1.0</real_time_factor></physics>
+    <plugin filename="gz-sim-physics-system" name="gz::sim::systems::Physics"/>
+    <plugin filename="gz-sim-sensors-system" name="gz::sim::systems::Sensors"><render_engine>ogre2</render_engine></plugin>
+    <plugin filename="gz-sim-scene-broadcaster-system" name="gz::sim::systems::SceneBroadcaster"/>
+    <plugin filename="gz-sim-user-commands-system" name="gz::sim::systems::UserCommands"/>
+    <scene><ambient>0.6 0.6 0.6 1</ambient><background>0.75 0.8 0.9 1</background><shadows>false</shadows></scene>
+    <light type="directional" name="sun"><cast_shadows>false</cast_shadows><pose>0 0 10 0 0 0</pose>
+      <direction>-0.4 0.2 -0.9</direction><diffuse>0.9 0.9 0.9 1</diffuse></light>
+    <model name="ground"><static>true</static><link name="l">
+      <visual name="v"><geometry><plane><normal>0 0 1</normal><size>60 30</size></plane></geometry>
+        <material><diffuse>0.45 0.5 0.45 1</diffuse></material></visual>
+      <collision name="c"><geometry><plane><normal>0 0 1</normal><size>60 30</size></plane></geometry></collision></link></model>
+
+    <model name="wall_left"><static>true</static><pose>10 4.1 0.75 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>26 0.2 1.5</size></box></geometry><material><diffuse>0.7 0.7 0.65 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>26 0.2 1.5</size></box></geometry></collision></link></model>
+    <model name="wall_right"><static>true</static><pose>10 -4.1 0.75 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>26 0.2 1.5</size></box></geometry><material><diffuse>0.7 0.7 0.65 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>26 0.2 1.5</size></box></geometry></collision></link></model>
+    <model name="wall_end"><static>true</static><pose>23.1 0 0.75 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.2 8.4 1.5</size></box></geometry><material><diffuse>0.7 0.7 0.65 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.2 8.4 1.5</size></box></geometry></collision></link></model>
+    <model name="wall_start"><static>true</static><pose>-3.1 0 0.75 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.2 8.4 1.5</size></box></geometry><material><diffuse>0.7 0.7 0.65 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.2 8.4 1.5</size></box></geometry></collision></link></model>
+    <model name="crate_0"><static>true</static><pose>7.0 2.6 0.4 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.8 0.8 0.8</size></box></geometry><material><diffuse>0.6 0.4 0.2 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.8 0.8 0.8</size></box></geometry></collision></link></model>
+    <model name="crate_1"><static>true</static><pose>11.0 -2.5 0.5 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>1.0 0.6 1.0</size></box></geometry><material><diffuse>0.5 0.5 0.2 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>1.0 0.6 1.0</size></box></geometry></collision></link></model>
+    <model name="crate_2"><static>true</static><pose>15.0 2.4 0.35 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.6 1.2 0.7</size></box></geometry><material><diffuse>0.3 0.5 0.3 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.6 1.2 0.7</size></box></geometry></collision></link></model>
+    <model name="crate_3"><static>true</static><pose>19.5 -2.2 0.6 0 0 0</pose><link name="l">
+      <visual name="v"><geometry><box><size>0.9 0.9 1.2</size></box></geometry><material><diffuse>0.6 0.2 0.2 1</diffuse></material></visual>
+      <collision name="c"><geometry><box><size>0.9 0.9 1.2</size></box></geometry></collision></link></model>
+    <model name="ped_0">
+      <pose>5.0 -3.0 0.85 0 0 0</pose>
+      <link name="body">
+        <gravity>false</gravity>
+        <inertial><mass>60</mass><inertia><ixx>1</ixx><iyy>1</iyy><izz>1</izz></inertia></inertial>
+        <visual name="v"><geometry><cylinder><radius>0.25</radius><length>1.7</length></cylinder></geometry>
+          <material><diffuse>0.20 0.3 0.80 1</diffuse></material></visual>
+      </link>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/ped_0/cmd_vel</topic>
+      </plugin>
+    </model>
+    <model name="ped_1">
+      <pose>9.0 3.0 0.85 0 0 0</pose>
+      <link name="body">
+        <gravity>false</gravity>
+        <inertial><mass>60</mass><inertia><ixx>1</ixx><iyy>1</iyy><izz>1</izz></inertia></inertial>
+        <visual name="v"><geometry><cylinder><radius>0.3</radius><length>1.7</length></cylinder></geometry>
+          <material><diffuse>0.35 0.3 0.65 1</diffuse></material></visual>
+      </link>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/ped_1/cmd_vel</topic>
+      </plugin>
+    </model>
+    <model name="ped_2">
+      <pose>13.0 -3.0 0.85 0 0 0</pose>
+      <link name="body">
+        <gravity>false</gravity>
+        <inertial><mass>60</mass><inertia><ixx>1</ixx><iyy>1</iyy><izz>1</izz></inertia></inertial>
+        <visual name="v"><geometry><cylinder><radius>0.25</radius><length>1.7</length></cylinder></geometry>
+          <material><diffuse>0.50 0.3 0.50 1</diffuse></material></visual>
+      </link>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/ped_2/cmd_vel</topic>
+      </plugin>
+    </model>
+    <model name="ped_3">
+      <pose>17.0 3.0 0.85 0 0 0</pose>
+      <link name="body">
+        <gravity>false</gravity>
+        <inertial><mass>60</mass><inertia><ixx>1</ixx><iyy>1</iyy><izz>1</izz></inertia></inertial>
+        <visual name="v"><geometry><cylinder><radius>0.3</radius><length>1.7</length></cylinder></geometry>
+          <material><diffuse>0.65 0.3 0.35 1</diffuse></material></visual>
+      </link>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/model/ped_3/cmd_vel</topic>
+      </plugin>
+    </model>
+    <model name="wm_robot">
+      <pose>0 0 0.0 0 0 0</pose>
+      <link name="base_link">
+        <gravity>false</gravity>
+        <inertial><mass>20</mass><inertia><ixx>1</ixx><iyy>1</iyy><izz>1</izz></inertia></inertial>
+        <visual name="body"><pose>0 0 0.15 0 0 0</pose><geometry><box><size>0.5 0.4 0.3</size></box></geometry>
+          <material><diffuse>0.9 0.9 0.2 1</diffuse></material></visual>
+        <visual name="mast"><pose>0.05 0 0.45 0 0 0</pose><geometry><cylinder><radius>0.04</radius><length>0.3</length></cylinder></geometry></visual>
+        <sensor name="camera" type="camera">
+          <pose>0.2 0 0.55 0 0 0</pose><update_rate>10</update_rate><topic>camera</topic>
+          <gz_frame_id>camera_optical</gz_frame_id>
+          <camera><horizontal_fov>1.6</horizontal_fov><image><width>448</width><height>252</height><format>R8G8B8</format></image>
+            <clip><near>0.1</near><far>40</far></clip></camera>
+        </sensor>
+        <sensor name="lidar" type="gpu_lidar">
+          <pose>0 0 0.65 0 0 0</pose><update_rate>10</update_rate><topic>lidar</topic>
+          <gz_frame_id>lidar</gz_frame_id>
+          <lidar><scan><horizontal><samples>360</samples><min_angle>-3.14159</min_angle><max_angle>3.14159</max_angle></horizontal>
+            <vertical><samples>16</samples><min_angle>-0.2618</min_angle><max_angle>0.2618</max_angle></vertical></scan>
+            <range><min>0.3</min><max>20</max></range></lidar>
+        </sensor>
+      </link>
+      <plugin filename="gz-sim-velocity-control-system" name="gz::sim::systems::VelocityControl">
+        <topic>/cmd_vel</topic>
+      </plugin>
+      <plugin filename="gz-sim-odometry-publisher-system" name="gz::sim::systems::OdometryPublisher">
+        <odom_frame>odom</odom_frame><robot_base_frame>base_link</robot_base_frame>
+        <odom_publish_frequency>30</odom_publish_frequency><dimensions>2</dimensions>
+        <odom_topic>/model/wm_robot/odometry</odom_topic><tf_topic>/model/wm_robot/tf</tf_topic>
+      </plugin>
+    </model>
+  </world>
+</sdf>
