@@ -3,7 +3,9 @@
 The bring-your-own-data path for :class:`~world_model_py.occupancy_head.OccupancyHead`:
 record a bag on your robot, then train a head on it. Reading uses the pure-python
 `rosbags <https://gitlab.com/ternaris/rosbags>`_ library, so no ROS install is
-needed and both ``.bag`` (ROS 1) and rosbag2 directories work.
+needed and both ``.bag`` (ROS 1) and rosbag2 directories work. Messages are
+decoded with the standard definitions, not the ones stored in the bag, which
+are sometimes empty in real recordings.
 
 What a bag must contain (topics are auto-detected by type, or given explicitly):
 
@@ -127,7 +129,6 @@ class BagOccupancy:
                  lidar_topic: str = "", odom_topic: str = "", camera_stride: int = 1,
                  max_range: float = 30.0, scan_window: float = 0.1, robot_radius: float = 0.5,
                  log=None):
-        from rosbags.highlevel import AnyReader
         from rosbags.typesys import Stores, get_typestore
 
         self.path = Path(path)
@@ -138,10 +139,18 @@ class BagOccupancy:
         self.scan_window_ns = int(scan_window * 1e9)
         log = log or (lambda *_: None)
 
-        # recorders sometimes store empty message definitions (common in ROS 1
-        # bags): fall back to the standard definitions for those types
-        store = get_typestore(Stores.ROS1_NOETIC if self.path.suffix == ".bag" else Stores.LATEST)
-        with AnyReader([self.path], default_typestore=store) as reader:
+        # Decode with the standard message definitions only: recorders sometimes
+        # store empty or stale ones (common in ROS 1 bags), and every type read
+        # here is a stock sensor_msgs / nav_msgs / tf2_msgs message.
+        if self.path.suffix == ".bag":
+            from rosbags.rosbag1 import Reader
+            store = get_typestore(Stores.ROS1_NOETIC)
+            deserialize = store.deserialize_ros1
+        else:
+            from rosbags.rosbag2 import Reader
+            store = get_typestore(Stores.LATEST)
+            deserialize = store.deserialize_cdr
+        with Reader(self.path) as reader:
             conns = {c.topic: c for c in reader.connections}
 
             def pick(given, types, prefer=()):
@@ -177,7 +186,7 @@ class BagOccupancy:
             base_frame = None
             cam_count = 0
             for conn, _, raw in reader.messages(connections=[cam_c, info_c, lidar_c, odom_c, *tf_cs]):
-                msg = reader.deserialize(raw, conn.msgtype)
+                msg = deserialize(raw, conn.msgtype)
                 if conn is info_c:
                     info = info or msg
                 elif conn is cam_c:
