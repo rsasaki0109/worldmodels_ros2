@@ -17,9 +17,6 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   Cross-checked on real data against the nuScenes labeller
   (`test/validate_rosbag_vs_nuscenes.py`, `test/nuscenes_to_rosbag.py`).
 
-### Fixed
-- `PixelEncoder` divided by zero on images smaller than its map.
-- The channel-PCA scale is floored, so near-constant channels can't blow up.
 - **Occupancy head** (`world_model_py.occupancy_head.OccupancyHead`): the
   encoder's patch-token map is lifted into BEV through the camera geometry and fed
   to a small BEV CNN, which predicts `FutureOccupancy`. Training uses torch;
@@ -46,6 +43,8 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   match the offline head and the costmap to equal their union.
 
 ### Fixed
+- `PixelEncoder` divided by zero on images smaller than its map.
+- The channel-PCA scale is floored, so near-constant channels can't blow up.
 - `world_model_costmap::WorldModelLayer` left previously predicted obstacles
   `LETHAL` after the prediction moved or vanished. The master costmap resets
   only inside the bounds each layer reports, and the layer reported only this
