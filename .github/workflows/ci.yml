@@ -26,7 +26,7 @@ jobs:
           test/test_metrics.py test/test_anomaly.py test/test_registry.py
           test/test_wire.py test/test_remote_server.py test/test_planning.py
           test/test_play.py test/test_dynamics.py test/test_decoder.py
-          test/test_occupancy.py -q
+          test/test_occupancy.py test/test_occupancy_labels.py -q
 
   # Full ROS 2 Jazzy build + colcon test inside the official container.
   colcon:

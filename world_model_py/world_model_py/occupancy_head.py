@@ -16,7 +16,7 @@ Why this shape (each choice was measured, see ``test/train_occupancy_head.py``):
   * **Spatial tokens, not the pooled latent.** A mean-pooled latent has lost
     *where* things are. The adapter's latent is still the token mean, so the
     existing contract is unchanged.
-  * **A small BEV CNN** (1x1 -> kxk -> kxk -> 1x1) turns the lifted features
+  * **A small BEV CNN** (1x1 -> kxk (dilated) ... -> 1x1) turns the lifted features
     (current, change since the previous frame, ego command, cell position) into
     per-step logits; its receptive field covers how far obstacles move over the
     horizon.
@@ -83,15 +83,17 @@ def lift_table(camera: CameraModel, grid_shape, resolution, origin, heights, fma
     return idx, wts
 
 
-def _conv_np(x: np.ndarray, W: np.ndarray, b: np.ndarray) -> np.ndarray:
-    """'same' conv, x (N, R, C, Cin), W torch layout (Cout, Cin, k, k)."""
+def _conv_np(x: np.ndarray, W: np.ndarray, b: np.ndarray, dilation: int = 1) -> np.ndarray:
+    """'same' (dilated) conv, x (N, R, C, Cin), W torch layout (Cout, Cin, k, k)."""
     cout, cin, k, _ = W.shape
     if k == 1:
         return x @ W[:, :, 0, 0].T + b
-    p = k // 2
+    d = int(dilation)
+    p = d * (k // 2)
     n, r, c, _ = x.shape
     xp = np.pad(x, ((0, 0), (p, p), (p, p), (0, 0)))
-    cols = np.concatenate([xp[:, ky:ky + r, kx:kx + c] for ky in range(k) for kx in range(k)],
+    cols = np.concatenate([xp[:, ky * d:ky * d + r, kx * d:kx * d + c]
+                           for ky in range(k) for kx in range(k)],
                           axis=-1)                                   # (N, R, C, k*k*Cin)
     Wm = W.transpose(2, 3, 1, 0).reshape(k * k * cin, cout)
     return cols @ Wm + b
@@ -115,6 +117,7 @@ class OccupancyHead:
     ego_dim: int = 2
     ego_scale: float = 1.0
     threshold: float = 0.5
+    dilations: tuple = ()          # per layer; empty -> all 1
 
     _tables: dict = field(init=False, default_factory=dict, repr=False)
 
@@ -128,6 +131,7 @@ class OccupancyHead:
         self.grid_shape = tuple(int(v) for v in self.grid_shape)
         self.origin = tuple(float(v) for v in self.origin)
         self.heights = tuple(float(v) for v in self.heights)
+        self.dilations = tuple(int(v) for v in self.dilations)
 
     @property
     def channels(self) -> int:
@@ -188,7 +192,7 @@ class OccupancyHead:
     # --- inference (pure numpy) -------------------------------------------------
     def _net(self, x: np.ndarray) -> np.ndarray:
         for i, (W, b) in enumerate(self.layers):
-            x = _conv_np(x, W, b)
+            x = _conv_np(x, W, b, self.dilations[i] if i < len(self.dilations) else 1)
             if i < len(self.layers) - 1:
                 x = _gelu_tanh(x)
         return x                                                # (N, rows, cols, horizon)
@@ -239,6 +243,7 @@ class OccupancyHead:
             "heights": np.float32(self.heights), "dt": np.float32(self.dt),
             "ego_dim": np.int32(self.ego_dim), "ego_scale": np.float32(self.ego_scale),
             "threshold": np.float32(self.threshold), "n_layers": np.int32(len(self.layers)),
+            "dilations": np.int32(self.dilations),
         }
         for i, (W, b) in enumerate(self.layers):
             flat[f"W{i}"] = W
@@ -258,6 +263,7 @@ class OccupancyHead:
             heights=tuple(z["heights"].tolist()), dt=float(z["dt"]),
             ego_dim=int(z["ego_dim"]), ego_scale=float(z["ego_scale"]),
             threshold=float(z["threshold"]),
+            dilations=tuple(z["dilations"].tolist()) if "dilations" in z else (),
         )
 
     # --- training (torch, GPU; weights stored as numpy) --------------------------
@@ -297,6 +303,7 @@ class OccupancyHead:
         dt: float = 0.2,
         hidden: int = 64,
         kernel: int = 5,
+        dilations: tuple = (1, 1),
         epochs: int = 30,
         batch_size: int = 64,
         lr: float = 2e-3,
@@ -324,13 +331,13 @@ class OccupancyHead:
 
         torch.manual_seed(seed)
         f_in = head.in_channels
-        p = kernel // 2
-        model = nn.Sequential(
-            nn.Conv2d(f_in, hidden, 1), nn.GELU(approximate="tanh"),
-            nn.Conv2d(hidden, hidden, kernel, padding=p), nn.GELU(approximate="tanh"),
-            nn.Conv2d(hidden, hidden, kernel, padding=p), nn.GELU(approximate="tanh"),
-            nn.Conv2d(hidden, horizon, 1),
-        ).to(device)
+        mods = [nn.Conv2d(f_in, hidden, 1), nn.GELU(approximate="tanh")]
+        for d in dilations:          # kxk 'same' convs; dilation widens the receptive field
+            mods += [nn.Conv2d(hidden, hidden, kernel, padding=d * (kernel // 2), dilation=d),
+                     nn.GELU(approximate="tanh")]
+        mods.append(nn.Conv2d(hidden, horizon, 1))
+        model = nn.Sequential(*mods).to(device)
+        head.dilations = (1,) + tuple(int(d) for d in dilations) + (1,)
         tgt = np.asarray(targets, bool)
         msk = np.ones((n, rows, cols), bool) if masks is None else np.asarray(masks, bool)
         prior = float(np.clip(tgt[np.broadcast_to(msk[:, None], tgt.shape)].mean(), 1e-4, 1 - 1e-4))

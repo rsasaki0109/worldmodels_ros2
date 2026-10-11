@@ -157,6 +157,10 @@ def test_conv_matches_torch():
     ref = torch.nn.functional.conv2d(torch.from_numpy(x).permute(0, 3, 1, 2),
                                      torch.from_numpy(W), torch.from_numpy(b), padding=2)
     assert np.allclose(_conv_np(x, W, b), ref.permute(0, 2, 3, 1).numpy(), atol=1e-4)
+    ref2 = torch.nn.functional.conv2d(torch.from_numpy(x).permute(0, 3, 1, 2),
+                                      torch.from_numpy(W), torch.from_numpy(b), padding=4,
+                                      dilation=2)
+    assert np.allclose(_conv_np(x, W, b, 2), ref2.permute(0, 2, 3, 1).numpy(), atol=1e-4)
 
 
 def test_fit_trains_a_numpy_head():
@@ -168,8 +172,10 @@ def test_fit_trains_a_numpy_head():
     head = OccupancyHead.fit(z, z, rng.normal(size=(24, 2)), tgt, np.ones((24, 8, 8), bool),
                              camera=head0.camera,
                              channel_pca=(np.zeros(3), np.eye(3, dtype=np.float32), np.ones(3)),
-                             resolution=1.0, origin=(0.0, -4.0), hidden=8, epochs=2)
+                             resolution=1.0, origin=(0.0, -4.0), hidden=8, epochs=2,
+                             dilations=(1, 2))
     assert [W.shape[0] for W, _ in head.layers] == [8, 8, 8, 4]
+    assert head.dilations == (1, 1, 2, 1)
     thr = head.calibrate(z, z, np.zeros((24, 2)), tgt)
     assert 0.0 < thr < 1.0
     assert head.predict_proba_reduced(z[:2], z[:2]).shape == (2, 4, 8, 8)
