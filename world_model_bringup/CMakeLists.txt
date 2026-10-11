@@ -12,6 +12,7 @@ install(PROGRAMS
   scripts/smoke_nav2_loopback.py
   scripts/build_demo_bag.py
   scripts/gz_ped_mover.py
+  scripts/gz_nav_eval.py
   scripts/gz_data_drive.py
   DESTINATION share/${PROJECT_NAME}/scripts
 )

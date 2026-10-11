@@ -17,9 +17,10 @@ namespace world_model_costmap
  * into the costmap, so any planner/controller avoids where the model thinks
  * obstacles will be over the prediction horizon (union of all future steps).
  *
- * Assumption: the FutureOccupancy grids are expressed in the costmap's global
- * frame (the dummy/ijepa runtime publishes grids with an explicit origin). TF
- * reprojection of a differing frame is left as future work.
+ * Each grid is transformed from its header frame (e.g. the robot base frame a
+ * camera-based head predicts in) into the costmap's global frame via TF, at the
+ * grid's stamp when available (else the latest transform). Grids with an empty
+ * frame_id are taken to be in the global frame already.
  */
 class WorldModelLayer : public nav2_costmap_2d::CostmapLayer
 {
@@ -45,6 +46,7 @@ private:
   std::mutex mutex_;
 
   std::string topic_;
+  double transform_tolerance_{0.5};
   int occupied_threshold_{50};
   bool rolling_window_{false};
 

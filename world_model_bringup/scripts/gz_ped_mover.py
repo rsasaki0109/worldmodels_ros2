@@ -6,9 +6,14 @@ Each ped moves along world y at its own speed and turns around near the walls
 The bridge drops model names, so poses are matched to peds by their fixed x
 and height; the named ped poses are republished on /ground_truth/peds
 (world frame) for the closed-loop evaluator.
+
+``-p seed:=N`` (N > 0) holds each ped still for a random 0-``max_delay`` s of
+sim time first, so episodes see different crossing timings (the same seed
+gives the same timings, for a fair with/without comparison).
 """
 import json
 import os
+import random
 import sys
 
 import rclpy
@@ -24,6 +29,13 @@ class PedMover(Node):
         super().__init__("gz_ped_mover")
         self.peds = json.load(open(config))["peds"]
         self.turn_y = float(turn_y)
+        self.declare_parameter("seed", 0)
+        self.declare_parameter("max_delay", 8.0)
+        seed = self.get_parameter("seed").get_parameter_value().integer_value
+        max_delay = self.get_parameter("max_delay").get_parameter_value().double_value
+        rng = random.Random(seed)
+        self.delay = {p["name"]: (rng.uniform(0.0, max_delay) if seed > 0 else 0.0) for p in self.peds}
+        self.t0 = None
         self.dir = {p["name"]: (1.0 if p["y0"] < 0 else -1.0) for p in self.peds}
         self.pubs = {p["name"]: self.create_publisher(Twist, f"/model/{p['name']}/cmd_vel", 10)
                      for p in self.peds}
@@ -58,9 +70,15 @@ class PedMover(Node):
             self.gt_pub.publish(out)
 
     def _tick(self) -> None:
+        now = self.get_clock().now().nanoseconds * 1e-9
+        if now <= 0.0:
+            return
+        if self.t0 is None:
+            self.t0 = now
         for p in self.peds:
             tw = Twist()
-            tw.linear.y = self.dir[p["name"]] * float(p["speed"])
+            if now - self.t0 >= self.delay[p["name"]]:
+                tw.linear.y = self.dir[p["name"]] * float(p["speed"])
             self.pubs[p["name"]].publish(tw)
 
 

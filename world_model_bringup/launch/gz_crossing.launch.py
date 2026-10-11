@@ -21,7 +21,7 @@ import sys
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
 from launch.actions import (DeclareLaunchArgument, EmitEvent, ExecuteProcess, OpaqueFunction,
-                            RegisterEventHandler, SetEnvironmentVariable)
+                            RegisterEventHandler, SetEnvironmentVariable, TimerAction)
 from launch.event_handlers import OnProcessExit
 from launch.events import Shutdown
 from launch.substitutions import LaunchConfiguration
@@ -35,6 +35,12 @@ def _optional(context, share):
     out = []
     record = LaunchConfiguration("record").perform(context)
     drive = LaunchConfiguration("drive").perform(context)
+    rtf = float(LaunchConfiguration("rtf").perform(context))
+    if rtf != 1.0:   # slower than real time: CPU headroom for Nav2 + a world model
+        out.append(TimerAction(period=2.0, actions=[ExecuteProcess(cmd=[
+            "gz", "service", "-s", "/world/wm_crossing/set_physics", "--reqtype", "gz.msgs.Physics",
+            "--reptype", "gz.msgs.Boolean", "--timeout", "5000",
+            "--req", f"max_step_size: 0.004, real_time_factor: {rtf}"], output="screen")]))
     if record:
         out.append(Node(package="image_transport", executable="republish", name="camera_compress",
                         parameters=[{"use_sim_time": True, "in_transport": "raw", "out_transport": "compressed"}],
@@ -61,6 +67,9 @@ def generate_launch_description():
         DeclareLaunchArgument("record", default_value="", description="rosbag output dir (empty: no recording)"),
         DeclareLaunchArgument("drive", default_value="", description="data-collection drive, seconds of sim time"),
         DeclareLaunchArgument("seed", default_value="0", description="drive waypoint seed"),
+        DeclareLaunchArgument("rtf", default_value="1.0", description="Gazebo real-time factor"),
+        DeclareLaunchArgument("ped_seed", default_value="0",
+                              description="> 0: random per-ped start delays (closed-loop episodes)"),
         SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", gz_dir),
         ExecuteProcess(cmd=["gz", "sim", "-s", "-r", "--headless-rendering", world], output="screen"),
         Node(package="ros_gz_bridge", executable="parameter_bridge", output="screen",
@@ -73,6 +82,7 @@ def generate_launch_description():
              arguments=["--z", "0.65", "--frame-id", "base_link", "--child-frame-id", "lidar"]),
         ExecuteProcess(cmd=[sys.executable, os.path.join(share, "scripts", "gz_ped_mover.py"),
                             os.path.join(gz_dir, "wm_crossing_peds.json"),
-                            "--ros-args", "-p", "use_sim_time:=true"], output="screen"),
+                            "--ros-args", "-p", "use_sim_time:=true",
+                            "-p", ["seed:=", LaunchConfiguration("ped_seed")]], output="screen"),
         OpaqueFunction(function=_optional, kwargs={"share": share}),
     ])

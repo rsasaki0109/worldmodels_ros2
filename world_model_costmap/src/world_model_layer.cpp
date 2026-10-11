@@ -1,9 +1,13 @@
 #include "world_model_costmap/world_model_layer.hpp"
 
 #include <algorithm>
+#include <cmath>
 #include <limits>
 
 #include "pluginlib/class_list_macros.hpp"
+#include "tf2/exceptions.h"
+#include "tf2/utils.h"
+#include "tf2_ros/buffer.h"
 
 namespace world_model_costmap
 {
@@ -21,10 +25,12 @@ void WorldModelLayer::onInitialize()
   declareParameter("enabled", rclcpp::ParameterValue(true));
   declareParameter("topic", rclcpp::ParameterValue(std::string("/world_model_runtime/future_occupancy")));
   declareParameter("occupied_threshold", rclcpp::ParameterValue(50));
+  declareParameter("transform_tolerance", rclcpp::ParameterValue(0.5));
 
   node->get_parameter(name_ + ".enabled", enabled_);
   node->get_parameter(name_ + ".topic", topic_);
   node->get_parameter(name_ + ".occupied_threshold", occupied_threshold_);
+  node->get_parameter(name_ + ".transform_tolerance", transform_tolerance_);
 
   rolling_window_ = layered_costmap_->isRolling();
   default_value_ = NO_INFORMATION;
@@ -97,6 +103,8 @@ void WorldModelLayer::updateBounds(
   double mark_max_x = std::numeric_limits<double>::lowest();
   double mark_max_y = std::numeric_limits<double>::lowest();
 
+  const std::string global_frame = layered_costmap_->getGlobalFrameID();
+
   // Union of predicted occupancy over the whole horizon.
   for (const auto & grid : msg->grids) {
     const double res = grid.info.resolution;
@@ -106,17 +114,57 @@ void WorldModelLayer::updateBounds(
     const unsigned int w = grid.info.width;
     const unsigned int h = grid.info.height;
 
+    // grid frame -> costmap global frame (2D rigid transform)
+    double tx = 0.0, ty = 0.0, c = 1.0, s = 0.0;
+    const std::string & frame = grid.header.frame_id;
+    if (!frame.empty() && frame != global_frame) {
+      geometry_msgs::msg::TransformStamped tf;
+      try {
+        const tf2::TimePoint stamp = tf2_ros::fromMsg(grid.header.stamp);
+        if (tf_->canTransform(global_frame, frame, stamp)) {
+          tf = tf_->lookupTransform(global_frame, frame, stamp);
+        } else {
+          tf = tf_->lookupTransform(global_frame, frame, tf2::TimePointZero);
+          const double age = std::abs(
+            tf2::durationToSec(tf2_ros::fromMsg(tf.header.stamp) - stamp));
+          if (stamp != tf2::TimePointZero && age > transform_tolerance_) {
+            continue;
+          }
+        }
+      } catch (const tf2::TransformException & ex) {
+        RCLCPP_WARN_THROTTLE(
+          logger_, *clock_, 2000, "WorldModelLayer: no transform %s -> %s: %s",
+          frame.c_str(), global_frame.c_str(), ex.what());
+        continue;
+      }
+      tx = tf.transform.translation.x;
+      ty = tf.transform.translation.y;
+      const double yaw = tf2::getYaw(tf.transform.rotation);
+      c = std::cos(yaw);
+      s = std::sin(yaw);
+    }
+
+    // cover each grid cell's whole footprint when the costmap is finer than
+    // the grid (sub-sample at below the costmap resolution, so no holes even
+    // when the grid is rotated)
+    const int sub = std::max(1, static_cast<int>(std::ceil(res / (0.7 * getResolution()))));
     for (unsigned int gj = 0; gj < h; ++gj) {
       for (unsigned int gi = 0; gi < w; ++gi) {
         const int8_t v = grid.data[gj * w + gi];
         if (v < occupied_threshold_) {continue;}
-        const double wx = ox + (gi + 0.5) * res;
-        const double wy = oy + (gj + 0.5) * res;
-        unsigned int mx, my;
-        if (worldToMap(wx, wy, mx, my)) {
-          setCost(mx, my, LETHAL_OBSTACLE);
-          touch(wx, wy, min_x, min_y, max_x, max_y);
-          touch(wx, wy, &mark_min_x, &mark_min_y, &mark_max_x, &mark_max_y);
+        for (int sj = 0; sj < sub; ++sj) {
+          for (int si = 0; si < sub; ++si) {
+            const double gx = ox + (gi + (si + 0.5) / sub) * res;
+            const double gy = oy + (gj + (sj + 0.5) / sub) * res;
+            const double wx = tx + c * gx - s * gy;
+            const double wy = ty + s * gx + c * gy;
+            unsigned int mx, my;
+            if (worldToMap(wx, wy, mx, my)) {
+              setCost(mx, my, LETHAL_OBSTACLE);
+              touch(wx, wy, min_x, min_y, max_x, max_y);
+              touch(wx, wy, &mark_min_x, &mark_min_y, &mark_max_x, &mark_max_y);
+            }
+          }
         }
       }
     }

@@ -58,6 +58,10 @@ class BagObservationRelay(Node):
         self.declare_parameter("action_history_len", 8)
         self.declare_parameter("action_dim", 0)
         self.declare_parameter("instruction", "")
+        # drop camera frames closer than this (s, by header stamp) to the last
+        # relayed one: match the frame spacing an occupancy head was trained at
+        # (e.g. 0.2 for a 10 Hz camera with --camera-stride 2). 0 relays all.
+        self.declare_parameter("min_period", 0.0)
 
         image_topic = self.get_parameter("image_topic").get_parameter_value().string_value
         state_topic = self.get_parameter("state_topic").get_parameter_value().string_value.strip()
@@ -72,6 +76,8 @@ class BagObservationRelay(Node):
         self._action_history: deque[list[float]] = deque(maxlen=max(1, history_len))
         self._pub = self.create_publisher(ObservationMsg, obs_topic, 10)
         self._published = 0
+        self._min_period_ns = int(self.get_parameter("min_period").get_parameter_value().double_value * 1e9)
+        self._last_ns: Optional[int] = None
 
         self.create_subscription(Image, image_topic, self._on_image, 10)
         if state_topic:
@@ -131,8 +137,13 @@ class BagObservationRelay(Node):
             self._action_dim = int(vec.size)
 
     def _on_image(self, msg: Image) -> None:
+        ns = msg.header.stamp.sec * 1_000_000_000 + msg.header.stamp.nanosec
+        if self._min_period_ns and self._last_ns is not None and \
+                0 <= ns - self._last_ns < self._min_period_ns - 5_000_000:   # 5 ms slack
+            return
         if conv.image_msg_to_np(msg) is None:
             return
+        self._last_ns = ns
         out = build_observation(
             msg,
             self._latest_state,

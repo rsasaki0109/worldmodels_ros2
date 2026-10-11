@@ -17,6 +17,9 @@
   <depend>nav2_costmap_2d</depend>
   <depend>pluginlib</depend>
   <depend>nav_msgs</depend>
+  <depend>geometry_msgs</depend>
+  <depend>tf2</depend>
+  <depend>tf2_ros</depend>
   <depend>world_model_msgs</depend>
 
   <export>
