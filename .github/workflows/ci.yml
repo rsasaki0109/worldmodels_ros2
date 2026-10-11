@@ -41,8 +41,9 @@ jobs:
           apt-get update
           # ffmpeg via apt; pyarrow has no noble apt package so install via pip.
           # Both are skipped in rosdep (not resolvable rosdep keys).
+          # pyarrow>=26 needs NumPy 2, but noble's python3-numpy is 1.26.
           apt-get install -y ffmpeg python3-pip
-          pip install --break-system-packages pyarrow
+          pip install --break-system-packages "pyarrow<26"
           rosdep update
           rosdep install --from-paths . --ignore-src -y \
             --skip-keys "python3-pyarrow ffmpeg"
