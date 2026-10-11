@@ -3,6 +3,7 @@
 
 #include <mutex>
 #include <string>
+#include <vector>
 
 #include "nav2_costmap_2d/costmap_layer.hpp"
 #include "nav2_costmap_2d/layered_costmap.hpp"
@@ -47,6 +48,8 @@ private:
 
   std::string topic_;
   double transform_tolerance_{0.5};
+  std::vector<unsigned char> step_costs_;   // empty: every step LETHAL
+  double robot_clear_radius_{0.0};
   int occupied_threshold_{50};
   bool rolling_window_{false};
 

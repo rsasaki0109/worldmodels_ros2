@@ -12,8 +12,9 @@ truth:
   * contact_s   -- sim seconds spent overlapping
   * min_clear   -- closest robot-to-ped surface distance (m)
 
-Conditions: ``baseline`` (LiDAR obstacle layer only) and ``wm`` (+ the
-WorldModelLayer fed by a trained occupancy head, --head). Peds do not react to
+Conditions: ``baseline`` (LiDAR obstacle layer only), ``wm`` (+ the
+WorldModelLayer fed by a trained occupancy head, --head, with graded per-step
+costs) and ``wm_lethal`` (the same, every predicted cell LETHAL). Peds do not react to
 the robot and have no collision geometry, so contacts are counted, not
 simulated.
 
@@ -32,13 +33,14 @@ import time
 
 import rclpy
 from action_msgs.msg import GoalStatus
-from geometry_msgs.msg import PoseStamped
+from geometry_msgs.msg import PoseStamped, Twist
 from lifecycle_msgs.srv import GetState
 from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionClient
 from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
+from world_model_msgs.msg import FutureOccupancy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAV_NODES = ["controller_server", "planner_server", "behavior_server", "bt_navigator"]
@@ -58,8 +60,19 @@ class Episode(Node):
         self.pose = None
         self.reset()
         self.create_subscription(Odometry, "/odom", self._on_odom, 50)
+        self.create_subscription(Twist, "/cmd_vel", self._on_cmd, 10)
+        self.cmd = (0.0, 0.0)
         self.create_subscription(TFMessage, "/ground_truth/peds", self._on_peds, 50)
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose")
+        self.occ = 0
+        self.create_subscription(FutureOccupancy, "/world_model_runtime/future_occupancy",
+                                 self._on_occ, 5)
+
+    def _on_occ(self, msg):
+        self.occ += 1
+        if self.recording:     # prediction age on arrival (sim s): model latency
+            st = msg.header.stamp.sec + msg.header.stamp.nanosec * 1e-9
+            self.occ_lags.append(self.now() - st)
 
     def reset(self):
         self.min_clear = math.inf
@@ -68,7 +81,12 @@ class Episode(Node):
         self._in_contact = False
         self._last_t = None
         self.path_len = 0.0
+        self.occ_lags = []
+        self.trace = []        # (t, x, y, cmd v, cmd w, ped x/y ...) per odom message
         self.recording = False
+
+    def _on_cmd(self, msg):
+        self.cmd = (msg.linear.x, msg.angular.z)
 
     def now(self) -> float:
         return self.get_clock().now().nanoseconds * 1e-9
@@ -89,6 +107,8 @@ class Episode(Node):
         clear = min(math.hypot(p.x - x, p.y - y) - self.radii.get(n, 0.3) - self.robot_radius
                     for n, (x, y) in self.peds.items())
         self.min_clear = min(self.min_clear, clear)
+        self.trace.append([t, p.x, p.y, *self.cmd] + [v for n in sorted(self.radii)
+                                                       for v in self.peds.get(n, (math.nan, math.nan))])
         contact = clear < 0.0
         if contact and self._last_t is not None:
             self.contact_s += max(0.0, t - self._last_t)
@@ -147,12 +167,19 @@ def run_episode(node, cond, seed, a, logdir):
         node.pose, node.peds = None, {}
         if not node.spin_until(lambda: node.pose is not None and len(node.peds) == len(node.radii), 90):
             return {**res, "error": "world did not come up"}
-        nav = ["gz_nav.launch.py", f"world_model:={'true' if cond == 'wm' else 'false'}"]
-        if cond == "wm":
-            nav += [f"head:={a.head}", f"model_id:={a.model_id}", f"min_period:={a.min_period}"]
-        procs.append(_launch(nav, log))
+        wm = "true" if cond.startswith("wm") else "false"
+        procs.append(_launch(["gz_nav.launch.py", f"world_model:={wm}", "wm_nodes:=false",
+                              f"wm_lethal:={'true' if cond == 'wm_lethal' else 'false'}"], log))
         if not node.spin_until(node.nav_active, 120) or not node.nav.wait_for_server(timeout_sec=30):
             return {**res, "error": "nav2 did not come up"}
+        if cond.startswith("wm"):
+            # after Nav2 is up: a model loading next to the lifecycle bringup
+            # can starve its service calls
+            procs.append(_launch(["gz_nav.launch.py", "nav:=false", "world_model:=true", f"head:={a.head}",
+                                  f"model_id:={a.model_id}", f"min_period:={a.min_period}"], log))
+            node.occ = 0
+            if not node.spin_until(lambda: node.occ >= 3, 120):
+                return {**res, "error": "no future_occupancy from the world model"}
         node.spin_until(lambda: False, 3.0)                     # let the costmaps fill
         goal = NavigateToPose.Goal()
         goal.pose = PoseStamped()
@@ -176,12 +203,21 @@ def run_episode(node, cond, seed, a, logdir):
             node.spin_until(cancel.done, 10)
         x, y = node.pose
         dist = math.hypot(x - a.goal[0], y - a.goal[1])
+        if status == GoalStatus.STATUS_ABORTED and node.path_len < 0.05:
+            return {**res, "error": "goal aborted before moving (bringup)"}
         res.update(success=bool(status == GoalStatus.STATUS_SUCCEEDED and dist < 0.8),
                    status=int(status) if status is not None else -1, time=round(elapsed, 2),
                    dist_to_goal=round(dist, 2), path_len=round(node.path_len, 2),
                    collision=node.contacts > 0, contacts=node.contacts,
                    contact_s=round(node.contact_s, 2),
                    min_clear=round(node.min_clear, 3) if math.isfinite(node.min_clear) else None)
+        if a.traces and node.trace:
+            import numpy as np
+            np.savez_compressed(os.path.join(logdir, f"ep{seed:03d}_{cond}_trace.npz"),
+                                trace=np.asarray(node.trace), peds=np.array(sorted(node.radii)))
+        if node.occ_lags:
+            lags = sorted(node.occ_lags)
+            res.update(predictions=len(lags), pred_lag_p50=round(lags[len(lags) // 2], 3))
         return res
     finally:
         _stop(procs[::-1])
@@ -218,13 +254,16 @@ def main() -> int:
     ap.add_argument("--min-period", type=float, default=0.2)
     ap.add_argument("--goal", type=lambda s: tuple(float(v) for v in s.split(",")), default=(21.0, 0.0))
     ap.add_argument("--timeout", type=float, default=120.0, help="sim seconds per episode")
-    ap.add_argument("--rtf", type=float, default=0.5, help="Gazebo real-time factor (CPU headroom)")
+    ap.add_argument("--rtf", type=float, default=0.3,
+                    help="Gazebo real-time factor, the same for every condition: low enough that "
+                         "the model keeps up with --min-period in sim time on this CPU")
     ap.add_argument("--robot-radius", type=float, default=0.3)
+    ap.add_argument("--traces", action="store_true", help="save per-episode trajectories (npz)")
     ap.add_argument("--out", required=True)
     a, ros_args = ap.parse_known_args()
     conds = a.conditions.split(",")
-    if "wm" in conds and not a.head:
-        raise SystemExit("--head is required for the 'wm' condition")
+    if any(c.startswith("wm") for c in conds) and not a.head:
+        raise SystemExit("--head is required for the wm conditions")
     a.head = os.path.abspath(a.head) if a.head else ""
     logdir = os.path.splitext(a.out)[0] + "_logs"
     os.makedirs(logdir, exist_ok=True)
@@ -240,7 +279,12 @@ def main() -> int:
             for cond in conds:
                 if (cond, seed) in done:
                     continue
-                r = run_episode(node, cond, seed, a, logdir)
+                for attempt in range(3):          # DDS can drop a lifecycle reply under load
+                    r = run_episode(node, cond, seed, a, logdir)
+                    if "error" not in r:
+                        break
+                    print(f"retrying {cond} seed {seed}: {r['error']}", flush=True)
+                    time.sleep(5)
                 print(json.dumps(r), flush=True)
                 results = [x for x in results if (x["condition"], x["seed"]) != (cond, seed)] + [r]
                 with open(a.out, "w") as f:

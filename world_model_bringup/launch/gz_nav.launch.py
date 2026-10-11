@@ -18,7 +18,7 @@ import tempfile
 import yaml
 from ament_index_python.packages import get_package_share_directory
 from launch import LaunchDescription
-from launch.actions import DeclareLaunchArgument, OpaqueFunction
+from launch.actions import DeclareLaunchArgument, OpaqueFunction, TimerAction
 from launch.substitutions import LaunchConfiguration
 from launch_ros.actions import Node
 
@@ -32,15 +32,20 @@ class _NoAliases(yaml.SafeDumper):
         return True
 
 
-def _params(src: str, world_model: bool) -> str:
+def _params(src: str, world_model: bool, lethal: bool = False) -> str:
     """Expand the YAML (anchors) and, for world_model, add the layer before
-    inflation in both costmaps. Returns a temp params file path."""
+    inflation in both costmaps (``lethal``: every predicted cell LETHAL, the
+    layer's default, instead of the graded step costs). Returns a temp params
+    file path."""
     with open(src) as f:
         params = yaml.safe_load(f)
     if world_model:
         for cm in ("local_costmap", "global_costmap"):
             p = params[cm][cm]["ros__parameters"]
             p["plugins"].insert(p["plugins"].index("inflation_layer"), "world_model_layer")
+            if lethal:
+                for k in ("step_costs", "robot_clear_radius"):
+                    p["world_model_layer"].pop(k, None)
     out = tempfile.NamedTemporaryFile("w", suffix="_gz_nav2.yaml", delete=False)
     yaml.dump(params, out, Dumper=_NoAliases)
     out.close()
@@ -50,20 +55,29 @@ def _params(src: str, world_model: bool) -> str:
 def _setup(context):
     arg = lambda n: LaunchConfiguration(n).perform(context)
     world_model = arg("world_model").lower() in ("1", "true", "yes")
-    params = _params(arg("params_file"), world_model)
+    params = _params(arg("params_file"), world_model, arg("wm_lethal").lower() in ("1", "true", "yes"))
     sim = {"use_sim_time": True}
-    nodes = [
+    nav = arg("nav").lower() in ("1", "true", "yes")
+    wm_nodes = arg("wm_nodes").lower() in ("1", "true", "yes")
+    nodes = [] if not nav else [
         Node(package="nav2_controller", executable="controller_server", output="screen",
              parameters=[params]),
         Node(package="nav2_planner", executable="planner_server", output="screen", parameters=[params]),
         Node(package="nav2_behaviors", executable="behavior_server", output="screen", parameters=[params]),
         Node(package="nav2_bt_navigator", executable="bt_navigator", output="screen", parameters=[params]),
-        Node(package="nav2_lifecycle_manager", executable="lifecycle_manager", name="lifecycle_manager_navigation",
-             output="screen", parameters=[sim, {"autostart": True, "node_names": NAV_NODES}]),
+        # bring the nodes up once DDS discovery between them has settled: a
+        # lifecycle transition requested too early can lose its reply, and the
+        # manager then waits forever
+        TimerAction(period=float(arg("lifecycle_delay")), actions=[
+            Node(package="nav2_lifecycle_manager", executable="lifecycle_manager",
+                 name="lifecycle_manager_navigation", output="screen",
+                 parameters=[sim, {"autostart": True, "node_names": NAV_NODES}])]),
     ]
-    if world_model:
+    if world_model and wm_nodes:
         nodes += [
+            # one BLAS thread: spinning BLAS workers on every core starve Nav2
             Node(package="world_model_py", executable="runtime_node", output="screen",
+                 additional_env={"OMP_NUM_THREADS": "1", "OPENBLAS_NUM_THREADS": "1", "MKL_NUM_THREADS": "1"},
                  parameters=[sim, {"adapter": "ijepa", "model_id": arg("model_id"),
                                    "occupancy_head": arg("head"), "occupancy_frame": "base_link",
                                    "horizon": 4, "queue_depth": 1}]),
@@ -85,6 +99,15 @@ def generate_launch_description():
                               description="encoder the head was trained on: pixels | an HF I-JEPA id"),
         DeclareLaunchArgument("min_period", default_value="0.2",
                               description="camera frame spacing the head was trained at (s)"),
+        # split bringup (gz_nav_eval.py): Nav2 first, the world model nodes
+        # once Nav2 is active (nav:=false wm_nodes:=true)
+        DeclareLaunchArgument("nav", default_value="true", description="start Nav2"),
+        DeclareLaunchArgument("wm_nodes", default_value="true",
+                              description="with world_model: start runtime_node + bag_relay"),
+        DeclareLaunchArgument("wm_lethal", default_value="false",
+                              description="mark every predicted cell LETHAL (no graded step costs)"),
+        DeclareLaunchArgument("lifecycle_delay", default_value="5.0",
+                              description="s between starting the Nav2 nodes and activating them"),
         DeclareLaunchArgument("params_file", default_value=os.path.join(share, "config", "gz_nav2.yaml")),
         OpaqueFunction(function=_setup),
     ])
