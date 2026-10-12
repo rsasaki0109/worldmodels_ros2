@@ -10,6 +10,11 @@ and height; the named ped poses are republished on /ground_truth/peds
 ``-p seed:=N`` (N > 0) holds each ped still for a random 0-``max_delay`` s of
 sim time first, so episodes see different crossing timings (the same seed
 gives the same timings, for a fair with/without comparison).
+
+``-p start_topic:=/ground_truth/ped_start``: the peds stand still until a
+``std_msgs/Empty`` arrives there, and the delays count from it. The evaluator
+sends it with the navigation goal, so every condition meets exactly the same
+crossings; otherwise they would depend on how fast the processes started.
 """
 import json
 import os
@@ -18,6 +23,7 @@ import sys
 
 import rclpy
 from geometry_msgs.msg import Twist
+from std_msgs.msg import Empty
 from rclpy.node import Node
 from tf2_msgs.msg import TFMessage
 
@@ -36,6 +42,11 @@ class PedMover(Node):
         rng = random.Random(seed)
         self.delay = {p["name"]: (rng.uniform(0.0, max_delay) if seed > 0 else 0.0) for p in self.peds}
         self.t0 = None
+        self.declare_parameter("start_topic", "")
+        start_topic = self.get_parameter("start_topic").get_parameter_value().string_value
+        self.started = not start_topic
+        if start_topic:
+            self.create_subscription(Empty, start_topic, self._on_start, 10)
         self.dir = {p["name"]: (1.0 if p["y0"] < 0 else -1.0) for p in self.peds}
         self.pubs = {p["name"]: self.create_publisher(Twist, f"/model/{p['name']}/cmd_vel", 10)
                      for p in self.peds}
@@ -69,9 +80,17 @@ class PedMover(Node):
         if out.transforms:
             self.gt_pub.publish(out)
 
+    def _on_start(self, _msg) -> None:
+        if not self.started:
+            self.started = True
+            self.t0 = None              # delays count from now
+            self.get_logger().info("start received: pedestrians walking")
+
     def _tick(self) -> None:
         now = self.get_clock().now().nanoseconds * 1e-9
-        if now <= 0.0:
+        if now <= 0.0 or not self.started:
+            for pub in self.pubs.values():
+                pub.publish(Twist())
             return
         if self.t0 is None:
             self.t0 = now
