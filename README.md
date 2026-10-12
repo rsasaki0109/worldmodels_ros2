@@ -760,6 +760,89 @@ Build the labels anywhere with a CPU (`--labels-only`, ~7 s per scene), then
 encode and train on a GPU. The heads trained on nuScenes data fall under the
 nuScenes terms of use (non-commercial).
 
+### Closed loop in Gazebo: does it help Nav2?
+
+![Per-seed differences against the LiDAR-only baseline](docs/gz_closed_loop.png)
+
+<sub>Each dot is one seed: the same pedestrian crossings with and without the
+World Model, compared pairwise. Left: how close the robot came to a pedestrian
+(higher means more clearance). Right: time spent in contact (lower is better).</sub>
+
+`world_model_bringup` has a headless Gazebo Harmonic world (`wm_crossing`): a
+22 m corridor with crates and four pedestrians crossing it back and forth at
+0.5–0.8 m/s. The pedestrians do not react to the robot. The robot carries a
+camera and a 16-beam LiDAR. Everything runs on a CPU:
+
+1. **Data.** `gz_crossing.launch.py record:=DIR drive:=300` drives the robot
+   along random waypoints and records a rosbag. Four 5-minute bags were recorded.
+2. **Head.** `train_occupancy_head.py --data rosbag` trains the head on it (raw
+   pixels encoder, CPU). On the held-out bag, mean IoU is 0.59, against 0.67
+   for a privileged copy of the true current occupancy and 0.08 for the prior.
+3. **Nav2.** `gz_nav.launch.py` runs map-free Nav2: MPPI, NavFn, and rolling
+   odom-frame costmaps built from the LiDAR. `world_model:=true` adds the
+   `WorldModelLayer` to both costmaps, fed live by `runtime_node` from the
+   camera at 5 Hz. Predictions arrive 0.16 s old (median, sim time).
+4. **Episodes.** `gz_nav_eval.py` drives the robot 21 m to the end of the
+   corridor. The pedestrians stand at the walls until the goal is sent, then
+   start after delays drawn from the seed. Every condition therefore meets the
+   same crossings. Contacts (robot footprint overlapping a pedestrian) come
+   from Gazebo ground truth. Physics runs at 0.3× real time, so the model
+   keeps up; the evaluator checks the speed before every episode.
+
+| 15 seeds each | success | episodes with a contact | contacts | contact time | closest approach (mean) | time to goal |
+|---|---|---|---|---|---|---|
+| baseline (LiDAR obstacle layer) | 15/15 | 14/15 | 23 | 31.3 s | −0.38 m | **48.7 s** |
+| + `WorldModelLayer` (every predicted cell `LETHAL`) | 15/15 | 13/15 | 22 | **21.7 s** | **−0.19 m** | 52.9 s |
+| + `WorldModelLayer` (graded `step_costs`) | 15/15 | 13/15 | 21 | 23.9 s | −0.28 m | 50.0 s |
+
+(Closest approach is the surface-to-surface distance; negative means overlap.)
+
+**It does not prevent contacts here, but encounters are milder.** These
+pedestrians walk into the robot no matter what, and almost every episode has a
+contact in every condition. The comparison is paired per seed:
+
+- **Clearance improves with the all-`LETHAL` layer.** The closest approach is
+  0.19 m larger on average, and larger on 13 of 15 seeds (sign test p = 0.01).
+  It costs time: the robot is 4.2 s slower on average.
+- **The graded layer shows the same direction, more weakly.** Clearance is
+  +0.10 m (p = 0.61) and contact time 0.5 s shorter (p = 0.09). Neither is
+  significant.
+- **The head forecasts pedestrians only weakly.** On the held-out bag it marks
+  19% of the cells pedestrians will occupy 1.5 s ahead, against 3% for the
+  current LiDAR view. That is a real gain, but most future pedestrian
+  positions are still missed.
+- **False alarms are rare.** Only 0.4 predicted cells per frame lie 0.5 m or
+  more from any real obstacle.
+
+**An earlier version of this evaluation was wrong.** The pedestrians' start
+delays counted from when their control process launched, so the same seed did
+not give the same crossings in every condition. That version showed the layer
+making things worse (26 contacts against 7), which was an artifact. Pedestrians
+now start with the goal. In the same flawed setup, two runs of the identical
+baseline gave 6/15 and 13/15 episodes with a contact.
+
+A 2 s union of predictions stamped into a costmap loses *when* each cell will
+be occupied. A time-indexed check (trajectory point at time t against the grid
+for t) and a stronger encoder are the next things to try on this rig.
+
+```bash
+# world + data collection (headless; CPU only)
+ros2 launch world_model_bringup gz_crossing.launch.py record:=/data/gz/run0 drive:=300 seed:=0
+python3 world_model_py/test/train_occupancy_head.py --data rosbag \
+    --bags /data/gz/run0 /data/gz/run1 /data/gz/run2 /data/gz/run3 --encoder pixels --out gz_head
+# closed loop: baseline vs + WorldModelLayer, same seeds; results + per-episode logs
+python3 $(ros2 pkg prefix world_model_bringup)/share/world_model_bringup/scripts/gz_nav_eval.py \
+    --episodes 15 --conditions baseline,wm_lethal,wm --head gz_head/occupancy_head_pixels.npz \
+    --out gz_eval.json --ros-args -p use_sim_time:=true
+```
+
+Making this loop run turned up two bugs in the `WorldModelLayer`, both fixed:
+
+- it ignored the grids' frame;
+- on a costmap finer than the grid, it marked only each cell's centre.
+
+`integration_occupancy_nav2.py` now checks the TF path too.
+
 ## Nav2 avoidance preview (predicted occupancy → detour)
 
 ![World Model predicted occupancy steers around the lethal union](docs/nav2_avoidance.gif)

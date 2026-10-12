@@ -40,7 +40,9 @@ _ACTION_EXTRACTORS: dict[str, Callable] = {
 
 
 def extract_action_vector(msg, type_str: str, mode: str = "scalar") -> np.ndarray:
-    """Return action vector from a message. ``scalar`` keeps angular.z (steering)."""
+    """Return action vector from a message. ``scalar`` keeps angular.z (steering);
+    ``planar`` is ``[linear.x, angular.z]`` (forward speed, yaw rate), the ego
+    input of an occupancy head trained with ``--data rosbag``."""
     if type_str not in _ACTION_EXTRACTORS:
         raise ValueError(f"unsupported action type '{type_str}'")
     full = np.asarray(_ACTION_EXTRACTORS[type_str](msg), dtype=np.float32)
@@ -50,6 +52,10 @@ def extract_action_vector(msg, type_str: str, mode: str = "scalar") -> np.ndarra
         if full.size < 6:
             return full[:1]
         return np.array([full[5]], dtype=np.float32)
+    if mode == "planar":
+        if full.size < 6:
+            raise ValueError(f"action mode 'planar' needs a twist, got '{type_str}'")
+        return np.array([full[0], full[5]], dtype=np.float32)
     raise ValueError(f"unknown action mode '{mode}'")
 
 

@@ -42,6 +42,14 @@ def test_twist_extractor_dim():
     assert vec[5] == pytest.approx(0.2)
 
 
+def test_planar_action_mode_is_speed_and_yaw_rate():
+    from world_model_py.topic_vectors import extract_action_vector
+    tw = Twist()
+    tw.linear.x, tw.linear.y, tw.angular.z = 0.6, 0.1, -0.3
+    vec = extract_action_vector(tw, "geometry_msgs/msg/Twist", "planar")
+    assert vec.tolist() == pytest.approx([0.6, -0.3])
+
+
 rclpy = pytest.importorskip("rclpy")
 
 

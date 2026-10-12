@@ -297,11 +297,18 @@ def make_ijepa_adapter(**kwargs) -> IJepaAdapter:
     """Registry factory: build an I-JEPA adapter backed by a real HF encoder.
 
     Accepts encoder kwargs (model_id, device, dtype, image_size) plus
-    ``occupancy_head`` (a trained head ``.npz`` path). Importing the encoder
+    ``occupancy_head`` (a trained head ``.npz`` path). ``model_id="pixels"``
+    serves a head trained on the raw-pixel baseline encoder instead. Importing the encoder
     (and thus torch/transformers) happens only when this is called.
     """
     adapter_dt = kwargs.pop("dt", 0.1)
     head = kwargs.pop("occupancy_head", None)
+    model_id = str(kwargs.get("model_id", ""))
+    if model_id == "pixels" or model_id.startswith("pixels-"):
+        # GPU-free baseline (no download): ``pixels`` = 64x64 map, as
+        # train_occupancy_head.py --encoder pixels; ``pixels-N`` = NxN
+        size = int(model_id.split("-", 1)[1]) if "-" in model_id else 64
+        return IJepaAdapter(PixelEncoder(size=size), dt=adapter_dt, name="pixels", occupancy_head=head)
     encoder = _HFEncoder(**kwargs)
     return IJepaAdapter(encoder, dt=adapter_dt, occupancy_head=head)
 

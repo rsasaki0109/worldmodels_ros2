@@ -244,3 +244,10 @@ def test_pixel_encoder_handles_small_and_large_images():
         assert m.shape == (16, 16, 3) and np.isfinite(m).all()
     assert np.allclose(enc.embed_map(small), 128 / 255.0)
     assert np.isclose(enc.embed_map(big).mean(), big.mean() / 255.0, atol=1e-3)   # area mean
+
+
+def test_ijepa_factory_serves_pixel_heads():
+    from world_model_py.adapters.jepa import make_ijepa_adapter
+    wm = make_ijepa_adapter(model_id="pixels-16")
+    assert isinstance(wm._enc, PixelEncoder) and wm._enc.size == 16 and wm.name == "pixels"
+    assert make_ijepa_adapter(model_id="pixels")._enc.size == 64

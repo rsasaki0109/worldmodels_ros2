@@ -16,6 +16,30 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
   Cross-checked on real data against the nuScenes labeller
   (`test/validate_rosbag_vs_nuscenes.py`, `test/nuscenes_to_rosbag.py`).
+- **Closed-loop evaluation in Gazebo** (`world_model_bringup`):
+  - `gz_crossing.launch.py`: a headless Gazebo Harmonic corridor with crates and
+    four walking pedestrians, and a camera + 3D-LiDAR robot. `record:=DIR
+    drive:=N` records a training rosbag for `--data rosbag`.
+  - `gz_nav.launch.py` + `config/gz_nav2.yaml`: map-free Nav2 (MPPI, NavFn,
+    rolling odom-frame costmaps). `world_model:=true` adds the
+    `WorldModelLayer`, fed by `runtime_node` + `bag_relay` on the robot camera.
+  - `gz_nav_eval.py`: seeded episodes, the same pedestrian timings for every
+    condition, scored from Gazebo ground truth (success, time, pedestrian
+    contacts, clearance, prediction latency).
+
+  Result over 15 paired seeds, with a pixels head trained on 20 minutes of
+  the world's own rosbags: the layer **does not prevent contacts** (21–22,
+  against 23 for the LiDAR-only baseline). Encounters are milder: the
+  all-`LETHAL` layer leaves 0.19 m more clearance (13/15 seeds, p = 0.01) and
+  costs 4.2 s. The README has the analysis.
+- `WorldModelLayer`: `step_costs` (graded cost per prediction step; the default
+  is unchanged, every step `LETHAL`) and `robot_clear_radius`.
+- `runtime_node`: `occupancy_frame` (stamp the grids with the head's base frame)
+  and `queue_depth` (`1` = always predict from the freshest frame).
+- `bag_relay`: `min_period` (match the frame spacing a head was trained at) and
+  `action_mode:=planar` (`[linear.x, angular.z]`, the head's ego input).
+- `ijepa` adapter: `model_id:=pixels[-N]` serves a head trained on the
+  raw-pixel baseline encoder, with no download.
 
 - **Occupancy head** (`world_model_py.occupancy_head.OccupancyHead`): the
   encoder's patch-token map is lifted into BEV through the camera geometry and fed
@@ -43,6 +67,11 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   match the offline head and the costmap to equal their union.
 
 ### Fixed
+- `WorldModelLayer` ignored the grids' frame (they were stamped into the
+  costmap as if already in its global frame), and on a costmap finer than the
+  grid it marked only each cell's centre. It now transforms grids through TF
+  (at their stamp, else the latest transform within `transform_tolerance`) and
+  covers each cell's full footprint.
 - `PixelEncoder` divided by zero on images smaller than its map.
 - The channel-PCA scale is floored, so near-constant channels can't blow up.
 - `world_model_costmap::WorldModelLayer` left previously predicted obstacles

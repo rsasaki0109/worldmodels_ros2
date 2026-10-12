@@ -16,6 +16,7 @@ from __future__ import annotations
 
 import rclpy
 from rclpy.lifecycle import LifecycleNode, State, TransitionCallbackReturn
+from std_msgs.msg import Header
 
 from world_model_msgs.msg import (
     FutureOccupancy as FutureOccupancyMsg,
@@ -37,6 +38,12 @@ class WorldModelRuntime(LifecycleNode):
         self.declare_parameter("horizon", 8)
         # trained OccupancyHead (.npz) -> ijepa/vjepa2 also publish future_occupancy
         self.declare_parameter("occupancy_head", "")
+        # frame the occupancy grids are expressed in (the head's robot base
+        # frame); empty keeps the observation's header frame
+        self.declare_parameter("occupancy_frame", "")
+        # observation queue depth; 1 = always predict from the freshest frame
+        # (closed loop with a model slower than the camera)
+        self.declare_parameter("queue_depth", 10)
         # autostart: self-transition through configure+activate on boot, so the
         # plain `ros2 launch` / `ros2 run` path "just works" without a separate
         # lifecycle manager. Set false to drive transitions manually.
@@ -80,7 +87,8 @@ class WorldModelRuntime(LifecycleNode):
         self._pub_risk = self.create_lifecycle_publisher(RiskScoreMsg, "~/risk_score", 10)
         self._pub_occ = self.create_lifecycle_publisher(FutureOccupancyMsg, "~/future_occupancy", 10)
         self._sub = self.create_subscription(
-            ObservationMsg, "~/observation", self._on_observation, 10
+            ObservationMsg, "~/observation", self._on_observation,
+            max(1, int(self.get_parameter("queue_depth").get_parameter_value().integer_value)),
         )
         self.get_logger().info(f"configured world model adapter '{name}': {self._adapter.info()}")
         return TransitionCallbackReturn.SUCCESS
@@ -125,10 +133,12 @@ class WorldModelRuntime(LifecycleNode):
         self._pub_future.publish(conv.future_to_msg(pred, header))
         self._pub_risk.publish(conv.risk_to_msg(pred, header))
 
+        occ_frame = self.get_parameter("occupancy_frame").get_parameter_value().string_value
+        occ_header = Header(stamp=header.stamp, frame_id=occ_frame or header.frame_id)
         occ = FutureOccupancyMsg()
-        occ.header = header
+        occ.header = occ_header
         occ.dt = float(pred.dt)
-        occ.grids = conv.occupancy_to_grids(pred, header)
+        occ.grids = conv.occupancy_to_grids(pred, occ_header)
         self._pub_occ.publish(occ)
 
 

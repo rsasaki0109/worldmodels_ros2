@@ -4,12 +4,14 @@ End-to-end check of the ROS path with a trained head on real frames:
 
   1. starts ``runtime_node`` (``adapter:=ijepa``, ``occupancy_head:=<npz>``) and a
      standalone ``nav2_costmap_2d`` whose only plugin is
-     ``world_model_costmap::WorldModelLayer``;
+     ``world_model_costmap::WorldModelLayer``. The costmap is in ``odom`` with
+     the robot off the origin and rotated, so the ``base_link`` grids go
+     through TF;
   2. publishes ``world_model_msgs/Observation`` built from nuScenes ``CAM_FRONT``
      frames (image + last ego command), one at a time;
   3. checks every ``FutureOccupancy`` (horizon, resolution, origin, unknown
      outside the camera's view), that the costmap's lethal cells equal the union
-     of the predicted grids, and that the runtime's grids equal the head run
+     of the predicted grids moved into ``odom``, and that the runtime's grids equal the head run
      offline on the same frames (numpy, no ROS).
 
 Needs ROS 2 Jazzy + ``ros-jazzy-nav2-costmap-2d``, a built workspace, a head
@@ -42,10 +44,14 @@ from world_model_py import conversions as conv
 
 # the standalone nav2_costmap_2d executable is a lifecycle node named /costmap
 # that publishes its grid on /costmap
+# The costmap lives in odom and the robot sits off the origin, rotated: the
+# layer must move the base_link grids into odom through TF.
+ROBOT_XY_YAW = (1.5, -0.75, 0.5)
+
 COSTMAP_YAML = """
 costmap:
   ros__parameters:
-    global_frame: base_link
+    global_frame: odom
     robot_base_frame: base_link
     rolling_window: true
     width: 50
@@ -92,18 +98,32 @@ def costmap_lethal(cm: OccupancyGrid) -> np.ndarray:
     return np.asarray(cm.data, np.int8).reshape(cm.info.height, cm.info.width) >= 99
 
 
+def _quat_z(yaw):
+    return np.sin(yaw / 2), np.cos(yaw / 2)
+
+
 def union_in_costmap(msg: FutureOccupancy, cm: OccupancyGrid, threshold=50) -> np.ndarray:
-    """Expected lethal cells: the union of predicted grids, mapped like the layer does."""
+    """Expected lethal cells: the union of predicted grids (base_link), moved into
+    the costmap frame and sub-sampled like the layer does."""
+    tx, ty, yaw = ROBOT_XY_YAW
+    qz, qw = _quat_z(yaw)
+    yaw = np.arctan2(2.0 * qw * qz, 1.0 - 2.0 * qz * qz)      # as the layer recovers it
+    c, s = np.cos(yaw), np.sin(yaw)
     out = np.zeros((cm.info.height, cm.info.width), bool)
     for g in msg.grids:
         arr = np.asarray(g.data, np.int8).reshape(g.info.height, g.info.width)
         jj, ii = np.nonzero(arr >= threshold)
-        wx = g.info.origin.position.x + (ii + 0.5) * g.info.resolution
-        wy = g.info.origin.position.y + (jj + 0.5) * g.info.resolution
-        mx = np.floor((wx - cm.info.origin.position.x) / cm.info.resolution).astype(int)
-        my = np.floor((wy - cm.info.origin.position.y) / cm.info.resolution).astype(int)
-        ok = (mx >= 0) & (mx < cm.info.width) & (my >= 0) & (my < cm.info.height)
-        out[my[ok], mx[ok]] = True
+        res = g.info.resolution
+        sub = max(1, int(np.ceil(res / (0.7 * cm.info.resolution))))
+        for sj in range(sub):
+            for si in range(sub):
+                gx = g.info.origin.position.x + (ii + (si + 0.5) / sub) * res
+                gy = g.info.origin.position.y + (jj + (sj + 0.5) / sub) * res
+                wx, wy = tx + c * gx - s * gy, ty + s * gx + c * gy
+                mx = np.floor((wx - cm.info.origin.position.x) / cm.info.resolution).astype(int)
+                my = np.floor((wy - cm.info.origin.position.y) / cm.info.resolution).astype(int)
+                ok = (mx >= 0) & (mx < cm.info.width) & (my >= 0) & (my < cm.info.height)
+                out[my[ok], mx[ok]] = True
     return out
 
 
@@ -148,12 +168,14 @@ def main() -> int:
     procs = [
         subprocess.Popen([sys.executable, "-m", "world_model_py.runtime_node", "--ros-args",
                           "-p", "adapter:=ijepa", "-p", f"occupancy_head:={os.path.abspath(args.head)}",
-                          "-p", f"horizon:={head.horizon}"]),
+                          "-p", f"horizon:={head.horizon}", "-p", "occupancy_frame:=base_link"]),
         # C++ executables are started directly (not via `ros2 run`) so the
         # shutdown signal reaches them and no stale /costmap survives a run
         subprocess.Popen([_exe("nav2_costmap_2d", "nav2_costmap_2d"), "--ros-args",
                           "--params-file", yaml.name]),
         subprocess.Popen([_exe("tf2_ros", "static_transform_publisher"),
+                          "--x", str(ROBOT_XY_YAW[0]), "--y", str(ROBOT_XY_YAW[1]),
+                          "--qz", repr(_quat_z(ROBOT_XY_YAW[2])[0]), "--qw", repr(_quat_z(ROBOT_XY_YAW[2])[1]),
                           "--frame-id", "odom", "--child-frame-id", "base_link"]),
     ]
     failures = []
@@ -185,12 +207,14 @@ def main() -> int:
             msg.image = conv.np_to_image_msg(img, msg.header)
             msg.action_history = [float(v) for v in ego]
             msg.action_dim = 2
-            n_before = len(node.occ)
             node.pub.publish(msg)
-            if not node.spin_until(lambda: len(node.occ) > n_before, 120):
-                failures.append(f"frame {k}: no FutureOccupancy within 120 s")
+            # the reply to *this* frame (same stamp): a late reply to an earlier
+            # frame (slow cold start) must not be checked against this one
+            mine = lambda: [o for o in node.occ if o.header.stamp == msg.header.stamp]
+            if not node.spin_until(lambda: bool(mine()), 240):
+                failures.append(f"frame {k}: no FutureOccupancy within 240 s")
                 continue
-            occ = node.occ[-1]
+            occ = mine()[0]
             ref = offline.predict_future(Obs(image=img, action_history=np.asarray([ego])),
                                          horizon=head.horizon)
             got = grids_of(occ)
