@@ -53,8 +53,8 @@ local_costmap:
 `step_costs` lets a planner trade a predicted obstacle off against other costs
 instead of treating every predicted cell as a wall. Graded, sub-inscribed costs
 such as `[220, 180, 140, 100]` are one option. The Gazebo evaluation measures
-both encodings; neither beat the LiDAR-only baseline there (see the top-level
-README).
+both encodings. Neither prevents contacts there, and the all-`LETHAL` one
+leaves the most clearance (see the top-level README).
 
 ## Verification status
 

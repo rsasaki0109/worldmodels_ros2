@@ -762,12 +762,11 @@ nuScenes terms of use (non-commercial).
 
 ### Closed loop in Gazebo: does it help Nav2?
 
-![Robot progress against pedestrian crossings, with and without the World Model](docs/gz_closed_loop.png)
+![Per-seed differences against the LiDAR-only baseline](docs/gz_closed_loop.png)
 
-<sub>One episode (seed 2), the same pedestrian timings in all three runs. Grey
-marks when a pedestrian is in the robot's lane at that point of the corridor.
-The LiDAR-only robot waits for them (the flat steps). With the
-`WorldModelLayer` it does not, and runs into them (×).</sub>
+<sub>Each dot is one seed: the same pedestrian crossings with and without the
+World Model, compared pairwise. Left: how close the robot came to a pedestrian
+(higher means more clearance). Right: time spent in contact (lower is better).</sub>
 
 `world_model_bringup` has a headless Gazebo Harmonic world (`wm_crossing`): a
 22 m corridor with crates and four pedestrians crossing it back and forth at
@@ -784,36 +783,47 @@ camera and a 16-beam LiDAR. Everything runs on a CPU:
    `WorldModelLayer` to both costmaps, fed live by `runtime_node` from the
    camera at 5 Hz. Predictions arrive 0.16 s old (median, sim time).
 4. **Episodes.** `gz_nav_eval.py` drives the robot 21 m to the end of the
-   corridor. Each seed gives the pedestrians the same start delays in every
-   condition. Contacts (robot footprint overlapping a pedestrian) come from
-   Gazebo ground truth. Physics runs at 0.3× real time so the model keeps up.
+   corridor. The pedestrians stand at the walls until the goal is sent, then
+   start after delays drawn from the seed. Every condition therefore meets the
+   same crossings. Contacts (robot footprint overlapping a pedestrian) come
+   from Gazebo ground truth. Physics runs at 0.3× real time, so the model
+   keeps up; the evaluator checks the speed before every episode.
 
-| 15 seeds each | success | episodes with a contact | contacts | contact time | time to goal |
-|---|---|---|---|---|---|
-| baseline (LiDAR obstacle layer) | 15/15 | **6/15** | **7** | **6.7 s** | **49.3 s** |
-| + `WorldModelLayer` (every predicted cell `LETHAL`) | 14/15 | 14/15 | 26 | 32.7 s | 50.7 s |
-| + `WorldModelLayer` (graded `step_costs`) | 15/15 | 14/15 | 19 | 23.5 s | 53.2 s |
+| 15 seeds each | success | episodes with a contact | contacts | contact time | closest approach (mean) | time to goal |
+|---|---|---|---|---|---|---|
+| baseline (LiDAR obstacle layer) | 15/15 | 14/15 | 23 | 31.3 s | −0.38 m | **48.7 s** |
+| + `WorldModelLayer` (every predicted cell `LETHAL`) | 15/15 | 13/15 | 22 | **21.7 s** | **−0.19 m** | 52.9 s |
+| + `WorldModelLayer` (graded `step_costs`) | 15/15 | 13/15 | 21 | 23.9 s | −0.28 m | 50.0 s |
 
-**It does not help here. It makes things worse.** With predicted occupancy in
-the costmaps, the robot collides more often. What we found:
+(Closest approach is the surface-to-surface distance; negative means overlap.)
 
+**It does not prevent contacts here, but encounters are milder.** These
+pedestrians walk into the robot no matter what, and almost every episode has a
+contact in every condition. The comparison is paired per seed:
+
+- **Clearance improves with the all-`LETHAL` layer.** The closest approach is
+  0.19 m larger on average, and larger on 13 of 15 seeds (sign test p = 0.01).
+  It costs time: the robot is 4.2 s slower on average.
+- **The graded layer shows the same direction, more weakly.** Clearance is
+  +0.10 m (p = 0.61) and contact time 0.5 s shorter (p = 0.09). Neither is
+  significant.
 - **The head forecasts pedestrians only weakly.** On the held-out bag it marks
   19% of the cells pedestrians will occupy 1.5 s ahead, against 3% for the
   current LiDAR view. That is a real gain, but most future pedestrian
   positions are still missed.
-- **False alarms are not the problem.** Only 0.4 predicted cells per frame lie
-  0.5 m or more from any real obstacle.
-- **The robot stops waiting.** In the traces, the baseline robot stops short
-  of a crossing pedestrian's lane until the pedestrian has passed. With the
-  layer it keeps going and meets the pedestrian in the lane.
-- **The cause is not pinned down.** Grading the costs (and clearing
-  predictions within 0.5 m of the robot) cuts contacts from 26 to 19, which
-  is still far above the baseline's 7.
+- **False alarms are rare.** Only 0.4 predicted cells per frame lie 0.5 m or
+  more from any real obstacle.
+
+**An earlier version of this evaluation was wrong.** The pedestrians' start
+delays counted from when their control process launched, so the same seed did
+not give the same crossings in every condition. That version showed the layer
+making things worse (26 contacts against 7), which was an artifact. Pedestrians
+now start with the goal. In the same flawed setup, two runs of the identical
+baseline gave 6/15 and 13/15 episodes with a contact.
 
 A 2 s union of predictions stamped into a costmap loses *when* each cell will
-be occupied. A time-indexed check (trajectory point at time t against the
-grid for t) and a stronger encoder are the next things to try. Both can be
-measured on this rig.
+be occupied. A time-indexed check (trajectory point at time t against the grid
+for t) and a stronger encoder are the next things to try on this rig.
 
 ```bash
 # world + data collection (headless; CPU only)
