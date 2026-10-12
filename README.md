@@ -694,6 +694,48 @@ parked or stopped vehicles. There is still a wide gap to `persist-gt`, which
 reads the labels: monocular range to small or distant agents is the limit at
 this data scale.
 
+### Your own robot: train from a rosbag
+
+`--data rosbag` builds training data from any camera + LiDAR recording, ROS 1
+`.bag` or rosbag2 (`world_model_py/rosbag_occ.py`, read with the pure-python
+`rosbags` library, so no ROS install is needed). It needs no annotation.
+Occupancy at `t + k·dt` is the LiDAR returns 0.3–2.0 m above a local ground
+estimate from the scans around that time, moved into the robot frame at `t`.
+Moving people therefore appear where they really went.
+
+```bash
+pip install rosbags pillow
+python3 world_model_py/test/train_occupancy_head.py --data rosbag \
+    --bags my_run1.bag my_run2/ --grid-cells 48 --grid-res 0.25 --encoder ijepa
+# topics are auto-detected by type; override with --image-topic / --lidar-topic /
+# --odom-topic / --camera-info-topic, or --camera-intrinsics fx,fy,cx,cy when the
+# bag has no CameraInfo
+```
+
+What the bag needs:
+
+- a camera (`Image` or `CompressedImage`) and its `CameraInfo`;
+- a `PointCloud2` from the LiDAR;
+- `nav_msgs/Odometry`;
+- the sensor mounts in `/tf_static`.
+
+Messages are decoded with the standard definitions, because real recordings
+sometimes store empty or wrong ones.
+
+**Checked against nuScenes.** `test/validate_rosbag_vs_nuscenes.py` converts
+nuScenes scenes into plain rosbag2s (`test/nuscenes_to_rosbag.py`) and labels
+them both ways:
+
+- the camera model and ego commands recovered from TF / CameraInfo / odometry
+  are identical to nuScenes' calibration;
+- visibility IoU is 0.90–0.92;
+- the annotation-free rosbag labels agree with the box-annotated ones: precision
+  0.84–0.95 and recall 0.89–0.96 within ±1 cell, both now and at t + 2 s.
+
+(SCAND, CC0, was the first candidate. Its bags carry no `CameraInfo` and no
+sensor TF, and some carry only raw Velodyne packets, so it would need its own
+calibration first.)
+
 **End-to-end in ROS 2 + Nav2.** `test/integration_occupancy_nav2.py` checks
 the whole path on real nuScenes frames. It runs `runtime_node` with
 `adapter:=ijepa` and the trained head, feeding a standalone `nav2_costmap_2d`

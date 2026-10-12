@@ -233,3 +233,14 @@ def test_wire_carries_occupancy_geometry():
     assert back.occupancy_resolution == 0.5 and back.occupancy_origin == (0.0, -4.0)
     legacy = wire.prediction_from_response({"latents": [], "occupancy": []})
     assert legacy.occupancy_resolution == 0.1 and legacy.occupancy_origin == (0.0, 0.0)
+
+
+def test_pixel_encoder_handles_small_and_large_images():
+    enc = PixelEncoder(size=16)
+    small = np.full((10, 12, 3), 128, np.uint8)            # smaller than the map
+    big = np.random.default_rng(0).integers(0, 255, (64, 80, 3), dtype=np.uint8)
+    for img in (small, big):
+        m = enc.embed_map(img)
+        assert m.shape == (16, 16, 3) and np.isfinite(m).all()
+    assert np.allclose(enc.embed_map(small), 128 / 255.0)
+    assert np.isclose(enc.embed_map(big).mean(), big.mean() / 255.0, atol=1e-3)   # area mean

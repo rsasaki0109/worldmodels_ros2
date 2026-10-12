@@ -268,12 +268,16 @@ class PixelEncoder:
         img = np.asarray(image_hwc_uint8, np.float32)
         if img.ndim == 2:
             img = np.repeat(img[:, :, None], 3, axis=2)
-        h, w = img.shape[:2]
-        ys = (np.arange(self.size + 1) * h) // self.size
-        xs = (np.arange(self.size + 1) * w) // self.size
-        rows = np.add.reduceat(img[:, :, :3], ys[:-1], axis=0) / np.diff(ys)[:, None, None]
-        pooled = np.add.reduceat(rows, xs[:-1], axis=1) / np.diff(xs)[None, :, None]
-        return (pooled / 255.0).astype(np.float32)
+        img = img[:, :, :3]
+        for axis in (0, 1):
+            n = img.shape[axis]
+            if n >= self.size:     # area-average down to `size` bins
+                edges = (np.arange(self.size + 1) * n) // self.size
+                img = np.add.reduceat(img, edges[:-1], axis=axis) / np.expand_dims(
+                    np.diff(edges), axis=1 - axis)[..., None]
+            else:                  # smaller than the map along this axis: nearest sample
+                img = np.take(img, ((np.arange(self.size) + 0.5) * n / self.size).astype(int), axis=axis)
+        return (img / 255.0).astype(np.float32)
 
     def embed(self, image_hwc_uint8: np.ndarray) -> np.ndarray:
         return self.embed_map(image_hwc_uint8).ravel()
