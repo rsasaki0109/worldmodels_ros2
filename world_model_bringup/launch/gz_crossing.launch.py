@@ -72,6 +72,8 @@ def generate_launch_description():
         DeclareLaunchArgument("drive", default_value="", description="data-collection drive, seconds of sim time"),
         DeclareLaunchArgument("seed", default_value="0", description="drive waypoint seed"),
         DeclareLaunchArgument("rtf", default_value="1.0", description="Gazebo real-time factor"),
+        DeclareLaunchArgument("ped_start_topic", default_value="",
+                              description="peds wait for std_msgs/Empty here (empty: walk at once)"),
         DeclareLaunchArgument("ped_seed", default_value="0",
                               description="> 0: random per-ped start delays (closed-loop episodes)"),
         SetEnvironmentVariable("GZ_SIM_RESOURCE_PATH", gz_dir),
@@ -87,6 +89,7 @@ def generate_launch_description():
         ExecuteProcess(cmd=[sys.executable, os.path.join(share, "scripts", "gz_ped_mover.py"),
                             os.path.join(gz_dir, "wm_crossing_peds.json"),
                             "--ros-args", "-p", "use_sim_time:=true",
-                            "-p", ["seed:=", LaunchConfiguration("ped_seed")]], output="screen"),
+                            "-p", ["seed:=", LaunchConfiguration("ped_seed")],
+                            "-p", ["start_topic:=", LaunchConfiguration("ped_start_topic")]], output="screen"),
         OpaqueFunction(function=_optional, kwargs={"share": share}),
     ])

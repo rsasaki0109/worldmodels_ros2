@@ -1,10 +1,11 @@
 #!/usr/bin/env python3
 """Closed-loop Nav2 evaluation in the wm_crossing world: with vs without a World Model.
 
-Each episode restarts the world (pedestrian start delays from ``ped_seed``,
-the same for every condition), starts Nav2 (``gz_nav.launch.py``), sends the
-robot from x=0 to the end of the corridor and records, from Gazebo ground
-truth:
+Each episode restarts the world. The pedestrians stand still until the goal
+is sent, then start after delays drawn from ``ped_seed``, so every condition
+meets exactly the same crossings. Each episode starts Nav2
+(``gz_nav.launch.py``), sends the robot from x=0 to the end of the corridor
+and records, from Gazebo ground truth:
 
   * success     -- goal reached within --timeout s of sim time
   * time        -- sim seconds to the goal
@@ -41,12 +42,14 @@ from nav2_msgs.action import NavigateToPose
 from nav_msgs.msg import Odometry
 from rclpy.action import ActionClient
 from rclpy.node import Node
+from std_msgs.msg import Empty
 from tf2_msgs.msg import TFMessage
 from world_model_msgs.msg import FutureOccupancy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAV_NODES = ["controller_server", "planner_server", "behavior_server", "bt_navigator"]
 WM_MODE = {"wm": "graded", "wm_lethal": "lethal", "wm_critic": "critic"}
+PED_START = "/ground_truth/ped_start"   # peds start (with their seeded delays) on the goal
 
 
 def _ped_radii():
@@ -67,6 +70,7 @@ class Episode(Node):
         self.cmd = (0.0, 0.0)
         self.create_subscription(TFMessage, "/ground_truth/peds", self._on_peds, 50)
         self.nav = ActionClient(self, NavigateToPose, "navigate_to_pose")
+        self.ped_start = self.create_publisher(Empty, PED_START, 10)
         self.occ = 0
         self.create_subscription(FutureOccupancy, "/world_model_runtime/future_occupancy",
                                  self._on_occ, 5)
@@ -171,7 +175,8 @@ def _stop(procs):
 
 def run_episode(node, cond, seed, a, logdir):
     log = open(os.path.join(logdir, f"ep{seed:03d}_{cond}.log"), "w")
-    procs = [_launch(["gz_crossing.launch.py", f"ped_seed:={seed}", f"rtf:={a.rtf}"], log)]
+    procs = [_launch(["gz_crossing.launch.py", f"ped_seed:={seed}", f"rtf:={a.rtf}",
+                      f"ped_start_topic:={PED_START}"], log)]
     res = {"condition": cond, "seed": seed}
     try:
         node.pose, node.peds = None, {}
@@ -208,6 +213,9 @@ def run_episode(node, cond, seed, a, logdir):
         node.recording = True
         t0, w0 = node.now(), time.time()
         send = node.nav.send_goal_async(goal)
+        for _ in range(3):                 # the mover acts on the first one only
+            node.ped_start.publish(Empty())
+            rclpy.spin_once(node, timeout_sec=0.05)
         if not node.spin_until(send.done, 30) or not send.result().accepted:
             return {**res, "error": "goal rejected"}
         result = send.result().get_result_async()
