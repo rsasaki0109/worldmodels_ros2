@@ -37,10 +37,14 @@ def _optional(context, share):
     drive = LaunchConfiguration("drive").perform(context)
     rtf = float(LaunchConfiguration("rtf").perform(context))
     if rtf != 1.0:   # slower than real time: CPU headroom for Nav2 + a world model
+        # retried until Gazebo confirms: the world may not serve the call yet
+        call = ("gz service -s /world/wm_crossing/set_physics --reqtype gz.msgs.Physics "
+                "--reptype gz.msgs.Boolean --timeout 3000 "
+                f"--req 'max_step_size: 0.004, real_time_factor: {rtf}'")
         out.append(TimerAction(period=2.0, actions=[ExecuteProcess(cmd=[
-            "gz", "service", "-s", "/world/wm_crossing/set_physics", "--reqtype", "gz.msgs.Physics",
-            "--reptype", "gz.msgs.Boolean", "--timeout", "5000",
-            "--req", f"max_step_size: 0.004, real_time_factor: {rtf}"], output="screen")]))
+            "bash", "-c", f"for i in $(seq 30); do {call} | grep -q 'data: true' && "
+                          f"echo 'real_time_factor set to {rtf}' && exit 0; sleep 1; done; "
+                          "echo 'FAILED to set real_time_factor' >&2; exit 1"], output="screen")]))
     if record:
         out.append(Node(package="image_transport", executable="republish", name="camera_compress",
                         parameters=[{"use_sim_time": True, "in_transport": "raw", "out_transport": "compressed"}],

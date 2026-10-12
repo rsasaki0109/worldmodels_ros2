@@ -125,6 +125,13 @@ class Episode(Node):
                 return True
         return False
 
+    def measure_rtf(self, wall_s: float) -> float:
+        """Sim seconds per wall second over ``wall_s``."""
+        self.spin_until(lambda: False, 0.2)
+        s0, w0 = self.now(), time.time()
+        self.spin_until(lambda: False, wall_s)
+        return (self.now() - s0) / max(time.time() - w0, 1e-3)
+
     def nav_active(self) -> bool:
         for n in NAV_NODES:
             cli = self.create_client(GetState, f"/{n}/get_state")
@@ -167,6 +174,14 @@ def run_episode(node, cond, seed, a, logdir):
         node.pose, node.peds = None, {}
         if not node.spin_until(lambda: node.pose is not None and len(node.peds) == len(node.radii), 90):
             return {**res, "error": "world did not come up"}
+        # the comparison is only fair at the requested sim speed: wait for it
+        rtf = None
+        for _ in range(10):
+            rtf = node.measure_rtf(3.0)
+            if abs(rtf - a.rtf) <= 0.25 * a.rtf:
+                break
+        else:
+            return {**res, "error": f"real-time factor {rtf:.2f}, not {a.rtf}"}
         wm = "true" if cond.startswith("wm") else "false"
         procs.append(_launch(["gz_nav.launch.py", f"world_model:={wm}", "wm_nodes:=false",
                               f"wm_lethal:={'true' if cond == 'wm_lethal' else 'false'}"], log))
@@ -188,7 +203,7 @@ def run_episode(node, cond, seed, a, logdir):
         goal.pose.pose.orientation.w = 1.0
         node.reset()
         node.recording = True
-        t0 = node.now()
+        t0, w0 = node.now(), time.time()
         send = node.nav.send_goal_async(goal)
         if not node.spin_until(send.done, 30) or not send.result().accepted:
             return {**res, "error": "goal rejected"}
@@ -197,6 +212,7 @@ def run_episode(node, cond, seed, a, logdir):
             rclpy.spin_once(node, timeout_sec=0.1)
         node.recording = False
         elapsed = node.now() - t0
+        res["rtf"] = round(elapsed / max(time.time() - w0, 1e-3), 3)
         status = result.result().status if result.done() else None
         if not result.done():
             cancel = send.result().cancel_goal_async()
