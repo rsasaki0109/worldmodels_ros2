@@ -9,8 +9,10 @@ Start the world first (gz_crossing.launch.py), then:
         head:=/path/occupancy_head_pixels.npz model_id:=pixels
 
 and send a NavigateToPose goal in the odom frame (gz_nav_eval.py does this for
-a with/without comparison). The two conditions share config/gz_nav2.yaml; the
-world model one only adds ``world_model_layer`` to both costmaps.
+a with/without comparison). All conditions share config/gz_nav2.yaml;
+``wm_mode`` picks how the prediction is used: ``graded`` / ``lethal`` add
+``world_model_layer`` to both costmaps, ``critic`` adds the time-indexed
+``WorldModelTimeCritic`` to MPPI instead.
 """
 import os
 import tempfile
@@ -32,18 +34,27 @@ class _NoAliases(yaml.SafeDumper):
         return True
 
 
-def _params(src: str, world_model: bool, lethal: bool = False) -> str:
-    """Expand the YAML (anchors) and, for world_model, add the layer before
-    inflation in both costmaps (``lethal``: every predicted cell LETHAL, the
-    layer's default, instead of the graded step costs). Returns a temp params
-    file path."""
+WM_MODES = ("graded", "lethal", "critic")
+
+
+def _params(src: str, world_model: bool, mode: str = "graded") -> str:
+    """Expand the YAML (anchors) and wire the world model in. ``mode``:
+    ``graded`` / ``lethal`` add the ``WorldModelLayer`` before inflation in both
+    costmaps (graded step costs, or every predicted cell LETHAL, the layer's
+    default); ``critic`` leaves the costmaps LiDAR-only and adds the
+    time-indexed ``WorldModelTimeCritic`` to MPPI. Returns a temp params file
+    path."""
+    if mode not in WM_MODES:
+        raise ValueError(f"wm_mode must be one of {WM_MODES}, got '{mode}'")
     with open(src) as f:
         params = yaml.safe_load(f)
-    if world_model:
+    if world_model and mode == "critic":
+        params["controller_server"]["ros__parameters"]["FollowPath"]["critics"].append("WorldModelTimeCritic")
+    elif world_model:
         for cm in ("local_costmap", "global_costmap"):
             p = params[cm][cm]["ros__parameters"]
             p["plugins"].insert(p["plugins"].index("inflation_layer"), "world_model_layer")
-            if lethal:
+            if mode == "lethal":
                 for k in ("step_costs", "robot_clear_radius"):
                     p["world_model_layer"].pop(k, None)
     out = tempfile.NamedTemporaryFile("w", suffix="_gz_nav2.yaml", delete=False)
@@ -55,7 +66,7 @@ def _params(src: str, world_model: bool, lethal: bool = False) -> str:
 def _setup(context):
     arg = lambda n: LaunchConfiguration(n).perform(context)
     world_model = arg("world_model").lower() in ("1", "true", "yes")
-    params = _params(arg("params_file"), world_model, arg("wm_lethal").lower() in ("1", "true", "yes"))
+    params = _params(arg("params_file"), world_model, arg("wm_mode"))
     sim = {"use_sim_time": True}
     nav = arg("nav").lower() in ("1", "true", "yes")
     wm_nodes = arg("wm_nodes").lower() in ("1", "true", "yes")
@@ -104,8 +115,9 @@ def generate_launch_description():
         DeclareLaunchArgument("nav", default_value="true", description="start Nav2"),
         DeclareLaunchArgument("wm_nodes", default_value="true",
                               description="with world_model: start runtime_node + bag_relay"),
-        DeclareLaunchArgument("wm_lethal", default_value="false",
-                              description="mark every predicted cell LETHAL (no graded step costs)"),
+        DeclareLaunchArgument("wm_mode", default_value="graded",
+                              description="how the prediction reaches Nav2: graded | lethal (WorldModelLayer "
+                                          "in the costmaps) | critic (time-indexed MPPI critic)"),
         DeclareLaunchArgument("lifecycle_delay", default_value="5.0",
                               description="s between starting the Nav2 nodes and activating them"),
         DeclareLaunchArgument("params_file", default_value=os.path.join(share, "config", "gz_nav2.yaml")),

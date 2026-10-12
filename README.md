@@ -229,6 +229,7 @@ Open the counterfactual clip in [Foxglove](https://foxglove.dev/) with layout
 | `world_model_nav2` | ament_python | score Nav2 candidate trajectories by model-based risk (`ScoreTrajectories` service + risk-coloured path markers) |
 | `world_model_costmap` | ament_cmake (C++) | **compiled** `nav2_costmap_2d::Layer` that stamps predicted `FutureOccupancy` into the costmap |
 | `world_model_dwb_critics` | ament_cmake (C++) | **compiled** `dwb_core::TrajectoryCritic` that scores DWB rollouts against predicted occupancy |
+| `world_model_mppi_critics` | ament_cmake (C++) | **compiled** MPPI critic that scores trajectories against predicted occupancy *in time* (the point at t vs the prediction for t) |
 | `world_model_bringup` | ament_cmake | launch files + demo config |
 
 ## Architecture
@@ -794,6 +795,7 @@ camera and a 16-beam LiDAR. Everything runs on a CPU:
 | baseline (LiDAR obstacle layer) | 15/15 | 14/15 | 23 | 31.3 s | −0.38 m | **48.7 s** |
 | + `WorldModelLayer` (every predicted cell `LETHAL`) | 15/15 | 13/15 | 22 | **21.7 s** | **−0.19 m** | 52.9 s |
 | + `WorldModelLayer` (graded `step_costs`) | 15/15 | 13/15 | 21 | 23.9 s | −0.28 m | 50.0 s |
+| + `WorldModelTimeCritic` (MPPI, time-indexed; LiDAR-only costmaps) | 15/15 | 13/15 | **20** | 25.1 s | −0.24 m | **48.2 s** |
 
 (Closest approach is the surface-to-surface distance; negative means overlap.)
 
@@ -821,18 +823,24 @@ making things worse (26 contacts against 7), which was an artifact. Pedestrians
 now start with the goal. In the same flawed setup, two runs of the identical
 baseline gave 6/15 and 13/15 episodes with a contact.
 
-A 2 s union of predictions stamped into a costmap loses *when* each cell will
-be occupied. A time-indexed check (trajectory point at time t against the grid
-for t) and a stronger encoder are the next things to try on this rig.
+- **The time-indexed critic keeps the robot's pace.** A 2 s union of
+  predictions stamped into a costmap loses *when* each cell will be occupied.
+  `world_model_mppi_critics::WorldModelTimeCritic` instead checks the MPPI
+  trajectory point reached at time t against the prediction for t. With it,
+  clearance is +0.14 m (larger on 11 of 15 seeds, p = 0.12) at no time cost
+  (−0.5 s), but contacts are not significantly fewer.
+
+The encoder is the obvious next lever: a raw-pixel head trained on 20 minutes
+of data is what all three variants above are limited by.
 
 ```bash
 # world + data collection (headless; CPU only)
 ros2 launch world_model_bringup gz_crossing.launch.py record:=/data/gz/run0 drive:=300 seed:=0
 python3 world_model_py/test/train_occupancy_head.py --data rosbag \
     --bags /data/gz/run0 /data/gz/run1 /data/gz/run2 /data/gz/run3 --encoder pixels --out gz_head
-# closed loop: baseline vs + WorldModelLayer, same seeds; results + per-episode logs
+# closed loop: baseline vs + WorldModelLayer / + WorldModelTimeCritic, same seeds
 python3 $(ros2 pkg prefix world_model_bringup)/share/world_model_bringup/scripts/gz_nav_eval.py \
-    --episodes 15 --conditions baseline,wm_lethal,wm --head gz_head/occupancy_head_pixels.npz \
+    --episodes 15 --conditions baseline,wm_lethal,wm,wm_critic --head gz_head/occupancy_head_pixels.npz \
     --out gz_eval.json --ros-args -p use_sim_time:=true
 ```
 

@@ -18,6 +18,7 @@
   <exec_depend>world_model_nav2</exec_depend>
   <exec_depend>world_model_costmap</exec_depend>
   <exec_depend>world_model_dwb_critics</exec_depend>
+  <exec_depend>world_model_mppi_critics</exec_depend>
   <exec_depend>nav2_bringup</exec_depend>
   <exec_depend>nav2_loopback_sim</exec_depend>
   <exec_depend>rosbag2</exec_depend>

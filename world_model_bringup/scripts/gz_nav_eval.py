@@ -15,7 +15,9 @@ and records, from Gazebo ground truth:
 
 Conditions: ``baseline`` (LiDAR obstacle layer only), ``wm`` (+ the
 WorldModelLayer fed by a trained occupancy head, --head, with graded per-step
-costs) and ``wm_lethal`` (the same, every predicted cell LETHAL). Peds do not react to
+costs), ``wm_lethal`` (the same, every predicted cell LETHAL) and
+``wm_critic`` (LiDAR-only costmaps; the prediction scores MPPI trajectories in
+time through ``WorldModelTimeCritic``). Peds do not react to
 the robot and have no collision geometry, so contacts are counted, not
 simulated.
 
@@ -46,6 +48,7 @@ from world_model_msgs.msg import FutureOccupancy
 
 HERE = os.path.dirname(os.path.abspath(__file__))
 NAV_NODES = ["controller_server", "planner_server", "behavior_server", "bt_navigator"]
+WM_MODE = {"wm": "graded", "wm_lethal": "lethal", "wm_critic": "critic"}
 PED_START = "/ground_truth/ped_start"   # peds start (with their seeded delays) on the goal
 
 
@@ -189,7 +192,7 @@ def run_episode(node, cond, seed, a, logdir):
             return {**res, "error": f"real-time factor {rtf:.2f}, not {a.rtf}"}
         wm = "true" if cond.startswith("wm") else "false"
         procs.append(_launch(["gz_nav.launch.py", f"world_model:={wm}", "wm_nodes:=false",
-                              f"wm_lethal:={'true' if cond == 'wm_lethal' else 'false'}"], log))
+                              f"wm_mode:={WM_MODE[cond]}" if cond in WM_MODE else "wm_mode:=graded"], log))
         if not node.spin_until(node.nav_active, 120) or not node.nav.wait_for_server(timeout_sec=30):
             return {**res, "error": "nav2 did not come up"}
         if cond.startswith("wm"):
