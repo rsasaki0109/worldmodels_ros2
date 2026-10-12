@@ -32,6 +32,13 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   against 23 for the LiDAR-only baseline). Encounters are milder: the
   all-`LETHAL` layer leaves 0.19 m more clearance (13/15 seeds, p = 0.01) and
   costs 4.2 s. The README has the analysis.
+- **`world_model_mppi_critics`**: `WorldModelTimeCritic`, an MPPI critic that
+  scores each sampled trajectory against `FutureOccupancy` *in time*. The point
+  reached at time t is checked against the prediction for t, with the
+  prediction's age included and the grids moved through TF. In the Gazebo
+  evaluation (`gz_nav.launch.py wm_mode:=critic`), it leaves 0.14 m more
+  clearance than the baseline (11/15 seeds, p = 0.12) at no time cost.
+  Contacts are not significantly fewer.
 - `WorldModelLayer`: `step_costs` (graded cost per prediction step; the default
   is unchanged, every step `LETHAL`) and `robot_clear_radius`.
 - `runtime_node`: `occupancy_frame` (stamp the grids with the head's base frame)
