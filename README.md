@@ -830,8 +830,37 @@ baseline gave 6/15 and 13/15 episodes with a contact.
   clearance is +0.14 m (larger on 11 of 15 seeds, p = 0.12) at no time cost
   (−0.5 s), but contacts are not significantly fewer.
 
-The encoder is the obvious next lever: a raw-pixel head trained on 20 minutes
-of data is what all three variants above are limited by.
+**What limits the head.** We tried the encoder first, then temporal context.
+All numbers are on the held-out bag. Pedestrian recall is the share of cells
+a pedestrian will occupy 1.5 s ahead that the head predicts.
+
+| head | map IoU | pedestrian recall, 1.5 s | runtime |
+|---|---|---|---|
+| I-JEPA ViT-H, previous frame 0.5 s back | 0.45 | 10.6% | 4.2 s/frame (CPU) |
+| raw pixels, previous frame 0.5 s back | 0.55 | 11.6% | 0.45 s/frame |
+| raw pixels, previous frame 0.1 s back | 0.58 | 14.6% | 0.45 s/frame |
+| raw pixels, previous frame 0.2 s back | 0.59 | 17.0% | 0.45 s/frame |
+| **raw pixels, frames 0.1, 0.2 and 0.4 s back** (`--prev-offsets 1,2,4`) | **0.59** | **22.8%** | 0.45 s/frame |
+
+- **I-JEPA does not help here.** Gazebo's flat-shaded images and I-JEPA's
+  16×16 token grid give it nothing over raw pixels, and it is 9× slower.
+- **Temporal context helps.** Several earlier frames (`prev_offsets`) raise
+  pedestrian recall by a third over the best single-frame head.
+- **Better recall did not carry over to the closed loop.** With that head
+  (15 paired seeds, RTF 0.12, so the head gets every 0.1 s frame):
+
+  | | success | episodes with a contact | contacts | closest approach (mean) | time to goal |
+  |---|---|---|---|---|---|
+  | baseline | 15/15 | 13/15 | 19 | −0.28 m | 47.4 s |
+  | + layer, all `LETHAL` | 14/15 | 11/15 | 16 | −0.15 m | 49.9 s |
+  | + time-indexed critic | 15/15 | 13/15 | 17 | −0.23 m | 47.3 s |
+
+  - The layer still trends towards more clearance (+0.13 m, 10/15 seeds,
+    p = 0.30) and costs time (+2.4 s, slower on 12/15, p = 0.035).
+  - The one failure is the all-`LETHAL` global costmap blocking the corridor.
+  - The critic shows no effect.
+  - The same baseline gave 23 contacts in the earlier run, so run-to-run
+    spread is as large as these effects.
 
 ```bash
 # world + data collection (headless; CPU only)
