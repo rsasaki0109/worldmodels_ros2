@@ -101,7 +101,12 @@ def _conv_np(x: np.ndarray, W: np.ndarray, b: np.ndarray, dilation: int = 1) -> 
 
 @dataclass
 class OccupancyHead:
-    """Feature map (+ previous map + ego command) -> (horizon, rows, cols) probability."""
+    """Feature map (+ earlier maps + ego command) -> (horizon, rows, cols) probability.
+
+    ``prev_offsets`` lists the earlier frames the head looks at, in frames of
+    ``frame_dt`` seconds before the current one (default: just the previous
+    frame). Each contributes its lifted difference to the current map, so
+    several offsets give the network motion over several time scales."""
 
     camera: CameraModel
     ch_mu: np.ndarray              # (C,)    channel PCA mean
@@ -118,6 +123,8 @@ class OccupancyHead:
     ego_scale: float = 1.0
     threshold: float = 0.5
     dilations: tuple = ()          # per layer; empty -> all 1
+    prev_offsets: tuple = (1,)     # earlier frames used, in frames back
+    frame_dt: float = 0.0          # s per frame of prev_offsets (0: unknown)
 
     _tables: dict = field(init=False, default_factory=dict, repr=False)
 
@@ -132,6 +139,9 @@ class OccupancyHead:
         self.origin = tuple(float(v) for v in self.origin)
         self.heights = tuple(float(v) for v in self.heights)
         self.dilations = tuple(int(v) for v in self.dilations)
+        self.prev_offsets = tuple(int(v) for v in self.prev_offsets) or (1,)
+        if min(self.prev_offsets) < 1:
+            raise ValueError(f"prev_offsets must be >= 1, got {self.prev_offsets}")
 
     @property
     def channels(self) -> int:
@@ -140,7 +150,7 @@ class OccupancyHead:
     @property
     def in_channels(self) -> int:
         k = len(self.heights)
-        return 2 * k * self.channels + k + self.ego_dim + 2
+        return (1 + len(self.prev_offsets)) * k * self.channels + k + self.ego_dim + 2
 
     # --- features ---------------------------------------------------------------
     def reduce(self, fmap: np.ndarray) -> np.ndarray:
@@ -162,8 +172,22 @@ class OccupancyHead:
         X, Y = np.meshgrid(xs, ys)
         return np.stack([X / span_x, Y / (span_y / 2)], -1).astype(np.float32)
 
+    def _prev_stack(self, z_prev, n: int):
+        """Earlier reduced maps as (N, P, Hf, Wf, c), P = len(prev_offsets);
+        a single (N, Hf, Wf, c) map is accepted when P == 1. None -> None."""
+        if z_prev is None:
+            return None
+        zp = np.asarray(z_prev)
+        if zp.ndim == 4:
+            zp = zp[:, None]
+        if zp.shape[0] != n or zp.shape[1] != len(self.prev_offsets):
+            raise ValueError(f"expected {len(self.prev_offsets)} earlier maps per sample "
+                             f"(prev_offsets={self.prev_offsets}), got shape {zp.shape}")
+        return zp
+
     def bev_input(self, z, z_prev=None, egos=None) -> np.ndarray:
-        """Reduced maps (N, Hf, Wf, c) -> BEV network input (N, rows, cols, F)."""
+        """Reduced maps (N, Hf, Wf, c) and earlier maps (N, P, Hf, Wf, c) (or
+        (N, Hf, Wf, c) for one offset) -> BEV network input (N, rows, cols, F)."""
         z = np.asarray(z, np.float32)
         n, hf, wf, c = z.shape
         idx, w = self._table((hf, wf))
@@ -175,13 +199,14 @@ class OccupancyHead:
             return (g * w[None, ..., None]).sum(3)              # (N, K, cells, c)
 
         cur = lift(z)
-        diff = cur - lift(np.asarray(z_prev, np.float32)) if z_prev is not None \
-            else np.zeros_like(cur)
+        zp = self._prev_stack(z_prev, n)
+        diffs = [cur - lift(np.asarray(zp[:, p], np.float32)) if zp is not None else np.zeros_like(cur)
+                 for p in range(len(self.prev_offsets))]
         valid = np.broadcast_to((w.sum(-1) > 0).astype(np.float32)[None], (n,) + w.shape[:2])
         k = len(self.heights)
-        feats = [cur.transpose(0, 2, 1, 3).reshape(n, rows * cols, k * c),
-                 diff.transpose(0, 2, 1, 3).reshape(n, rows * cols, k * c),
-                 valid.transpose(0, 2, 1)]
+        feats = [cur.transpose(0, 2, 1, 3).reshape(n, rows * cols, k * c)]
+        feats += [d.transpose(0, 2, 1, 3).reshape(n, rows * cols, k * c) for d in diffs]
+        feats.append(valid.transpose(0, 2, 1))
         if self.ego_dim:
             e = np.zeros((n, self.ego_dim), np.float32) if egos is None else \
                 np.asarray(egos, np.float32).reshape(n, -1)[:, : self.ego_dim]
@@ -213,10 +238,12 @@ class OccupancyHead:
             return (g * w_t[None, ..., None]).sum(3)             # (N, K, cells, c)
 
         cur = lift(z)
-        diff = cur - lift(torch.as_tensor(np.asarray(z_prev), device=device).float())
-        feats = [cur.permute(0, 2, 1, 3).reshape(n, cells, k * c),
-                 diff.permute(0, 2, 1, 3).reshape(n, cells, k * c),
-                 valid_t.T[None].expand(n, cells, k)]
+        zp = self._prev_stack(z_prev, n)
+        feats = [cur.permute(0, 2, 1, 3).reshape(n, cells, k * c)]
+        for p in range(len(self.prev_offsets)):
+            d = cur - lift(torch.as_tensor(np.asarray(zp[:, p]), device=device).float())
+            feats.append(d.permute(0, 2, 1, 3).reshape(n, cells, k * c))
+        feats.append(valid_t.T[None].expand(n, cells, k))
         if self.ego_dim:
             e = torch.as_tensor(np.asarray(egos, np.float32).reshape(n, -1)[:, : self.ego_dim],
                                 device=device) * self.ego_scale
@@ -239,9 +266,16 @@ class OccupancyHead:
         return _sigmoid(logits).transpose(0, 3, 1, 2).astype(np.float32)
 
     def predict_proba(self, fmap, prev_fmap=None, ego=None) -> np.ndarray:
-        """One raw feature map (Hf, Wf, C) -> (horizon, rows, cols) probabilities."""
+        """One raw feature map (Hf, Wf, C) -> (horizon, rows, cols) probabilities.
+        ``prev_fmap``: the earlier map, or a sequence of them, one per
+        ``prev_offsets`` entry (same order)."""
         z = self.reduce(fmap)[None]
-        zp = None if prev_fmap is None else self.reduce(prev_fmap)[None]
+        if prev_fmap is None:
+            zp = None
+        elif isinstance(prev_fmap, (list, tuple)):
+            zp = np.stack([self.reduce(m) for m in prev_fmap])[None]
+        else:
+            zp = self.reduce(prev_fmap)[None]
         e = None if ego is None else np.asarray(ego, np.float32)[None]
         return self.predict_proba_reduced(z, zp, e)[0]
 
@@ -280,6 +314,7 @@ class OccupancyHead:
             "ego_dim": np.int32(self.ego_dim), "ego_scale": np.float32(self.ego_scale),
             "threshold": np.float32(self.threshold), "n_layers": np.int32(len(self.layers)),
             "dilations": np.int32(self.dilations),
+            "prev_offsets": np.int32(self.prev_offsets), "frame_dt": np.float32(self.frame_dt),
         }
         for i, (W, b) in enumerate(self.layers):
             flat[f"W{i}"] = W
@@ -300,6 +335,8 @@ class OccupancyHead:
             ego_dim=int(z["ego_dim"]), ego_scale=float(z["ego_scale"]),
             threshold=float(z["threshold"]),
             dilations=tuple(z["dilations"].tolist()) if "dilations" in z else (),
+            prev_offsets=tuple(z["prev_offsets"].tolist()) if "prev_offsets" in z else (1,),
+            frame_dt=float(z["frame_dt"]) if "frame_dt" in z else 0.0,
         )
 
     # --- training (torch, GPU; weights stored as numpy) --------------------------
@@ -346,11 +383,15 @@ class OccupancyHead:
         lr: float = 2e-3,
         weight_decay: float = 1e-4,
         ego_scale: float = 1.0,
+        prev_offsets: tuple = (1,),
+        frame_dt: float = 0.0,
         device: str = "cpu",
         seed: int = 0,
         log=None,
     ) -> "OccupancyHead":
-        """Train on *reduced* maps ``z``/``z_prev`` (N, Hf, Wf, c) (see
+        """Train on *reduced* maps ``z`` (N, Hf, Wf, c) and ``z_prev`` (N, P,
+        Hf, Wf, c), one earlier map per ``prev_offsets`` entry, or (N, Hf, Wf, c)
+        for the default single offset (see
         :meth:`fit_channel_pca` / :meth:`reduce`), (N, horizon, rows, cols) bool
         ``targets`` and optional (N, rows, cols) visibility ``masks`` (loss only
         on visible cells). Returns a numpy-only head; torch is imported here only.
@@ -364,7 +405,8 @@ class OccupancyHead:
         mu, comp, std = channel_pca
         head = cls(camera=camera, ch_mu=mu, ch_comp=comp, ch_std=std, layers=[],
                    horizon=horizon, grid_shape=(rows, cols), resolution=resolution,
-                   origin=origin, heights=heights, dt=dt, ego_dim=ego_dim, ego_scale=ego_scale)
+                   origin=origin, heights=heights, dt=dt, ego_dim=ego_dim, ego_scale=ego_scale,
+                   prev_offsets=prev_offsets, frame_dt=frame_dt)
 
         torch.manual_seed(seed)
         f_in = head.in_channels

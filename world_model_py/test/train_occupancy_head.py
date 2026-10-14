@@ -264,7 +264,9 @@ class RosbagSource:
     def episode(self, key) -> dict:
         bi, _ = self.segments[key]
         lab = self.labels(key)
-        lo = int(lab["ts"].min()) - 1
+        # earlier frames reach back max(prev_offsets) (clipped at the bag start;
+        # build_split drops samples without enough history)
+        lo = max(0, int(lab["ts"].min()) - max(self.args.prev_offsets))
         frames = np.stack(self.bags[bi].frames[lo: int(lab["ts"].max()) + 1])
         return {**lab, "ts": lab["ts"] - lo, "frames": frames}
 
@@ -272,25 +274,36 @@ class RosbagSource:
         return self.episode(key)["frames"]
 
 
-def build_split(source, keys, encoders, pcas, batch, keep_frames=0):
-    """Encode a split. Per encoder: reduced maps for t and t-1 (float16);
-    shared: ego command, future targets, visibility and current occupancy."""
+def frame_dt(source) -> float:
+    """Seconds between consecutive frames the head sees (its prev_offsets unit)."""
+    if hasattr(source, "bags"):
+        return float(np.median(np.diff(source.bags[0].times)) * 1e-9)
+    cfg = getattr(source, "cfg", None)
+    return float(getattr(cfg, "dt", 0.0) or 0.0)
+
+
+def build_split(source, keys, encoders, pcas, batch, keep_frames=0, prev_offsets=(1,), sample_stride=1):
+    """Encode a split. Per encoder: reduced maps for t and for t - o, o in
+    ``prev_offsets`` (float16, (N, P, ...)); shared: ego command, future
+    targets, visibility and current occupancy. Samples without enough history
+    are dropped; ``sample_stride`` keeps every Nth sample."""
     z = {k: [] for k in encoders}
     zp = {k: [] for k in encoders}
     egos, targets, masks, current, static, frames = [], [], [], [], [], []
     for e, key in enumerate(keys):
         ep = source.episode(key)
-        ts = ep["ts"]
+        keep = np.nonzero(ep["ts"] >= max(prev_offsets))[0][::max(1, int(sample_stride))]
+        ts = ep["ts"][keep]
         for k, enc in encoders.items():
             mu, comp, std = pcas[k]
             m = ((encode(enc, ep["frames"], batch) - mu) @ comp / std).astype(np.float16)
             z[k].append(m[ts])
-            zp[k].append(m[ts - 1])
-        egos.append(ep["ego"])
-        targets.append(ep["target"])
-        masks.append(ep["mask"])
-        current.append(ep["current"])
-        static.append(ep["static"])
+            zp[k].append(np.stack([m[ts - o] for o in prev_offsets], 1))
+        egos.append(ep["ego"][keep])
+        targets.append(ep["target"][keep])
+        masks.append(ep["mask"][keep])
+        current.append(ep["current"][keep])
+        static.append(ep["static"][keep])
         if e < keep_frames:
             frames.append(ep["frames"][ts])
         if (e + 1) % 10 == 0 or e + 1 == len(keys):
@@ -369,6 +382,10 @@ def main() -> int:
                     help="rosbag without CameraInfo: fx,fy,cx,cy in recorded-image pixels")
     ap.add_argument("--camera-frame", default="", help="rosbag: override the camera TF frame")
     ap.add_argument("--camera-stride", type=int, default=2, help="rosbag: keep every Nth frame")
+    ap.add_argument("--prev-offsets", type=lambda v: tuple(int(x) for x in v.split(",")), default=(1,),
+                    help="earlier frames the head sees, in frames back (e.g. 1,2,4)")
+    ap.add_argument("--sample-stride", type=int, default=1,
+                    help="train/score every Nth frame (history still uses every frame)")
     ap.add_argument("--segment-s", type=float, default=20.0, help="rosbag: episode length")
     ap.add_argument("--grid-cells", type=int, default=48, help="rosbag: BEV cells per side")
     ap.add_argument("--grid-res", type=float, default=0.25, help="rosbag: metres per cell")
@@ -437,7 +454,8 @@ def main() -> int:
         log(f"[{split}] labelling + encoding {len(keys)} episodes")
         t0 = time.time()
         data[split] = build_split(source, keys, encoders, pcas, args.batch,
-                                  keep_frames=3 if split == "test" else 0)
+                                  keep_frames=3 if split == "test" else 0,
+                                  prev_offsets=args.prev_offsets, sample_stride=args.sample_stride)
         log(f"  {len(data[split]['ego'])} samples in {time.time() - t0:.1f}s")
 
     tr, va, te = data["train"], data["val"], data["test"]
@@ -474,7 +492,8 @@ def main() -> int:
             tr["z"][name], tr["zp"][name], tr["ego"], tr["target"], tr["mask"],
             camera=source.camera, channel_pca=pcas[name], resolution=source.resolution,
             origin=source.origin, heights=source.heights, dt=source.dt, hidden=args.hidden,
-            dilations=source.dilations, epochs=args.epochs, device=device, log=log)
+            dilations=source.dilations, epochs=args.epochs, device=device, log=log,
+            prev_offsets=args.prev_offsets, frame_dt=frame_dt(source))
         thr = head.calibrate(va["z"][name], va["zp"][name], va["ego"], va["target"], va["mask"])
         log(f"  trained in {time.time() - t0:.1f}s, threshold {thr:.2f}")
         proba = predict(head, te, name)
