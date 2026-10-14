@@ -32,6 +32,15 @@ project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
   against 23 for the LiDAR-only baseline). Encounters are milder: the
   all-`LETHAL` layer leaves 0.19 m more clearance (13/15 seeds, p = 0.01) and
   costs 4.2 s. The README has the analysis.
+- **Occupancy head with several earlier frames**
+  (`OccupancyHead.prev_offsets`, `train_occupancy_head.py --prev-offsets 1,2,4
+  --sample-stride N`). Each earlier frame adds its lifted difference to the
+  current map, and the adapter keeps a deep enough history. On the Gazebo
+  data, frames 0.1, 0.2 and 0.4 s back raise pedestrian recall 1.5 s ahead to
+  22.8%, against 17.0% for the best single earlier frame. In the closed loop
+  this did not significantly reduce contacts. Old heads load unchanged (one
+  previous frame). The README also compares an I-JEPA head on the Gazebo
+  data: no better than raw pixels, and 9× slower.
 - **`world_model_mppi_critics`**: `WorldModelTimeCritic`, an MPPI critic that
   scores each sampled trajectory against `FutureOccupancy` *in time*. The point
   reached at time t is checked against the prediction for t, with the

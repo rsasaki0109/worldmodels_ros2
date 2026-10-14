@@ -90,14 +90,14 @@ def test_visibility_fov_and_occlusion():
 
 
 # --- head ---------------------------------------------------------------------------
-def _random_head(fmap_c=5, channels=3, horizon=4, rows=8, cols=8, hidden=6, seed=0):
+def _random_head(fmap_c=5, channels=3, horizon=4, rows=8, cols=8, hidden=6, seed=0, prev_offsets=(1,)):
     rng = np.random.default_rng(seed)
     cam = CameraModel.pinhole(64, 64, 32, 32, 32, 6.4, position=(0, 0, 1.5))
     mu = rng.normal(size=fmap_c).astype(np.float32)
     comp = np.linalg.qr(rng.normal(size=(fmap_c, channels)))[0].astype(np.float32)
     head = OccupancyHead(camera=cam, ch_mu=mu, ch_comp=comp, ch_std=np.ones(channels),
                          layers=[], horizon=horizon, grid_shape=(rows, cols), resolution=1.0,
-                         origin=(0.0, -4.0))
+                         origin=(0.0, -4.0), prev_offsets=prev_offsets)
     f = head.in_channels
     shapes = [(hidden, f, 1), (hidden, hidden, 3), (hidden, hidden, 3), (horizon, hidden, 1)]
     head.layers = [(0.3 * rng.normal(size=(o, i, k, k)).astype(np.float32),
@@ -251,3 +251,66 @@ def test_ijepa_factory_serves_pixel_heads():
     wm = make_ijepa_adapter(model_id="pixels-16")
     assert isinstance(wm._enc, PixelEncoder) and wm._enc.size == 16 and wm.name == "pixels"
     assert make_ijepa_adapter(model_id="pixels")._enc.size == 64
+
+
+# --- several earlier frames (prev_offsets) --------------------------------------------
+def test_head_with_several_earlier_frames(tmp_path):
+    head = _random_head(prev_offsets=(1, 2, 4))
+    assert head.in_channels == (1 + 3) * 3 * 3 + 3 + 2 + 2   # cur + 3 diffs, 3 heights, 3 channels
+    rng = np.random.default_rng(4)
+    fmap, a, b, c = rng.normal(size=(4, 10, 12, 5)).astype(np.float32)
+    p = head.predict_proba(fmap, [a, b, c], ego=[0.5, 0.0])
+    assert p.shape == (4, 8, 8)
+    assert not np.allclose(p, head.predict_proba(fmap, [a, a, a], ego=[0.5, 0.0]))   # each offset matters
+    with pytest.raises(ValueError):
+        head.predict_proba(fmap, [a, b], ego=[0.5, 0.0])                                # wrong count
+    head.frame_dt = 0.1
+    path = str(tmp_path / "multi.npz")
+    head.save(path)
+    back = OccupancyHead.load(path)
+    assert back.prev_offsets == (1, 2, 4) and back.frame_dt == pytest.approx(0.1)
+    assert np.allclose(back.predict_proba(fmap, [a, b, c], [0.5, 0.0]), p, atol=1e-5)
+
+
+def test_heads_saved_before_prev_offsets_still_load(tmp_path):
+    head = _random_head()
+    path = str(tmp_path / "old.npz")
+    head.save(path)
+    with np.load(path) as z:
+        old = {k: z[k] for k in z.files if k not in ("prev_offsets", "frame_dt")}
+    np.savez(path, **old)
+    back = OccupancyHead.load(path)
+    assert back.prev_offsets == (1,) and back.in_channels == head.in_channels
+
+
+def test_adapter_feeds_the_offsets_from_its_history():
+    head = _random_head(fmap_c=3, channels=3, prev_offsets=(1, 3))
+    wm = IJepaAdapter(PixelEncoder(size=16), occupancy_head=head)
+    rng = np.random.default_rng(5)
+    imgs = [rng.integers(0, 255, (64, 64, 3), dtype=np.uint8) for _ in range(4)]
+    maps = [PixelEncoder(size=16).embed_map(im) for im in imgs]
+    seen = []
+    orig = head.predict_grids
+    head.predict_grids = lambda f, prev, ego: (seen.append(prev), orig(f, prev, ego))[1]
+    for im in imgs:
+        wm.predict_future(Observation(image=im), horizon=4)
+    assert seen[0] is None                                          # no history yet
+    assert all(np.allclose(x, maps[0]) for x in seen[1])            # short history: oldest stands in
+    assert np.allclose(seen[3][0], maps[2]) and np.allclose(seen[3][1], maps[0])   # t-1, t-3
+    wm.reset()
+    wm.predict_future(Observation(image=imgs[0]), horizon=4)
+    assert seen[-1] is None
+
+
+def test_fit_with_several_offsets():
+    pytest.importorskip("torch")
+    head0 = _random_head()
+    rng = np.random.default_rng(6)
+    z = rng.normal(size=(16, 10, 12, 3)).astype(np.float32)
+    zp = rng.normal(size=(16, 2, 10, 12, 3)).astype(np.float32)
+    tgt = rng.random((16, 4, 8, 8)) < 0.1
+    head = OccupancyHead.fit(z, zp, rng.normal(size=(16, 2)), tgt, None, camera=head0.camera,
+                             channel_pca=(np.zeros(3), np.eye(3, dtype=np.float32), np.ones(3)),
+                             resolution=1.0, hidden=8, epochs=1, prev_offsets=(1, 2), frame_dt=0.1)
+    assert head.prev_offsets == (1, 2) and head.layers[0][0].shape[1] == head.in_channels
+    assert head.predict_proba_reduced(z[:2], zp[:2]).shape == (2, 4, 8, 8)

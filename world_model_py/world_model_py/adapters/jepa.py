@@ -23,6 +23,7 @@ from the latent, so a real encoder can drive the Nav2 costmap layer / critic.
 """
 from __future__ import annotations
 
+from collections import deque
 from typing import Optional, Protocol
 
 import numpy as np
@@ -71,8 +72,10 @@ class IJepaAdapter(WorldModelAdapter):
         self._enc = encoder
         self.name = name
         self._prev: Optional[np.ndarray] = None
-        self._prev_map: Optional[np.ndarray] = None
         self._head = load_head(occupancy_head)
+        # earlier feature maps, newest last: as many as the head's prev_offsets reach
+        depth = max(self._head.prev_offsets) if self._head is not None else 1
+        self._maps: deque = deque(maxlen=depth)
         # the head was trained at a fixed step; its dt is the truth for the rollout
         self.dt = float(self._head.dt) if self._head is not None else float(dt)
 
@@ -129,15 +132,24 @@ class IJepaAdapter(WorldModelAdapter):
             if obs.action_history is not None and np.size(obs.action_history):
                 ego = np.atleast_2d(np.asarray(obs.action_history, np.float32))[-1]
             # the head predicts a fixed horizon; never extrapolate past it
-            pred.occupancy = self._head.predict_grids(fmap, self._prev_map, ego)[:horizon]
-            self._prev_map = fmap
+            pred.occupancy = self._head.predict_grids(fmap, self._earlier_maps(), ego)[:horizon]
+            self._maps.append(fmap)
             pred.occupancy_resolution = self._head.resolution
             pred.occupancy_origin = self._head.origin
         return pred
 
+    def _earlier_maps(self):
+        """The maps ``prev_offsets`` frames back (one per offset; the oldest one
+        kept stands in while the history is still short), or None at the start."""
+        if not self._maps:
+            return None
+        maps = [self._maps[-o] if o <= len(self._maps) else self._maps[0]
+                for o in self._head.prev_offsets]
+        return maps[0] if len(maps) == 1 else maps
+
     def reset(self) -> None:
         self._prev = None
-        self._prev_map = None
+        self._maps.clear()
 
     def info(self) -> dict:
         d = {"name": self.name, "remote": False, "kind": "jepa-encoder"}
